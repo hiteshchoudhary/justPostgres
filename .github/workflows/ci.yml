@@ -1,0 +1,41 @@
+# Typecheck, test, and prove the repository builds from a clean checkout.
+#
+# The build step is not redundant with `release`: it caught a .gitignore rule
+# that had silently excluded source files from every commit, which every local
+# build masked because the files were on disk. CI is the only place that builds
+# from the repository rather than from someone's working tree.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm --filter @justpostgres/control-plane test
+
+  # Builds the control-plane image from the checkout, so a missing-source or
+  # missing-manifest regression fails here rather than in a release.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/control-plane/Dockerfile
+          push: false

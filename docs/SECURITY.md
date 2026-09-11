@@ -205,3 +205,14 @@ Passwords never appear in the log or the audit table, including in failed attemp
 This is a pre-1.0 project with no security team. If you find something, open an issue for anything
 already public, and for anything exploitable contact the maintainers privately first. Nothing here
 has had an external audit; this document is what a careful read of our own code found.
+
+## Fixed issues
+
+- **Session cookie overwrite via the REST proxy** (v0.1.1). The proxy that serves a project's API at
+  `/rest/<ref>/` forwarded upstream `Set-Cookie` headers unchanged. Because that path shares the
+  admin origin and the session cookie is `Path=/`, a project — which can emit response headers
+  through PostgREST's `response.headers` GUC — could overwrite the admin's session cookie. The
+  inbound `Cookie` header was already stripped; the outbound `Set-Cookie` now is too. Reported
+  privately, following this document; fixed in v0.1.1.
+  <!-- credit: swap in the reporter's name/handle once they confirm it -->
+  Thanks to the external researcher who disclosed it responsibly.

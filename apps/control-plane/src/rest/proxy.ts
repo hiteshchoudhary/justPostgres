@@ -20,6 +20,47 @@ import type { HonoEnv } from "../api/context.js";
  * implementations of the same check that could disagree — the worse kind of
  * security bug, because it looks correct from both sides.
  */
+/**
+ * Headers that go *to* a project's API.
+ *
+ * Hop-by-hop headers must not be forwarded, and Host must reflect the upstream
+ * or PostgREST builds wrong URLs in its OpenAPI output. The control plane's own
+ * session cookie is stripped too: forwarding it would leak an admin credential
+ * to a service the project's own users can reach.
+ */
+export function filterRequestHeaders(incoming: Headers): Headers {
+  const headers = new Headers(incoming);
+  headers.delete("host");
+  headers.delete("connection");
+  headers.delete("keep-alive");
+  headers.delete("transfer-encoding");
+  headers.delete("upgrade");
+  headers.delete("cookie");
+  return headers;
+}
+
+/**
+ * Headers that come *back* from a project's API.
+ *
+ * The critical one is `set-cookie`. The proxy serves /rest/<ref>/ from the same
+ * origin as the admin UI and /api, and the admin session cookie is Path=/ — so
+ * an upstream Set-Cookie, which a project can emit at will (PostgREST exposes
+ * the `response.headers` GUC to database functions), would land in the admin's
+ * cookie jar and overwrite the session. Stripping it is the outbound mirror of
+ * the inbound `cookie` strip; the two belong together, and the absence of this
+ * half was a reported vulnerability.
+ *
+ * `location` is deliberately kept: PostgREST returns it on 201-Created inserts,
+ * and dropping it would break resource creation for a threat it does not carry.
+ */
+export function filterResponseHeaders(upstream: Headers): Headers {
+  const headers = new Headers(upstream);
+  headers.delete("transfer-encoding");
+  headers.delete("connection");
+  headers.delete("set-cookie");
+  return headers;
+}
+
 export function restProxyRoutes() {
   const app = new Hono<HonoEnv>();
 
@@ -67,18 +108,7 @@ async function forward(c: Context<HonoEnv>, ref: string, path: string): Promise<
   const url = new URL(c.req.url);
   const upstream = `http://${target.host}:${target.port}${path}${url.search}`;
 
-  const headers = new Headers(c.req.raw.headers);
-  // Hop-by-hop headers must not be forwarded, and Host must reflect the
-  // upstream or PostgREST builds wrong URLs in its OpenAPI output.
-  headers.delete("host");
-  headers.delete("connection");
-  headers.delete("keep-alive");
-  headers.delete("transfer-encoding");
-  headers.delete("upgrade");
-  // The control plane's own session cookie has no business reaching a project's
-  // API, and forwarding it would leak an admin credential to a service the
-  // project's own users can reach.
-  headers.delete("cookie");
+  const headers = filterRequestHeaders(c.req.raw.headers);
 
   try {
     const response = await fetch(upstream, {
@@ -90,9 +120,7 @@ async function forward(c: Context<HonoEnv>, ref: string, path: string): Promise<
       redirect: "manual",
     } as RequestInit);
 
-    const outHeaders = new Headers(response.headers);
-    outHeaders.delete("transfer-encoding");
-    outHeaders.delete("connection");
+    const outHeaders = filterResponseHeaders(response.headers);
 
     return new Response(response.body, { status: response.status, headers: outHeaders });
   } catch (err) {
