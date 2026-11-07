@@ -3,11 +3,15 @@ import { z } from "zod";
 import type { JobProgress } from "@justpostgres/shared";
 import {
   backupEnv,
+  needsSourceVolume,
   REPO_MOUNT,
   SOURCE_REPO_MOUNT,
   runPgBackRest,
+  sourceRepoForRestore,
+  sourceRepoSecretEnv,
   sourceRestoreCommand,
   summariseFailure,
+  type RepoSpec,
 } from "../../backups/pgbackrest.js";
 import type { BackupService } from "../../backups/service.js";
 import { credentials, projects } from "../../db/schema.js";
@@ -36,9 +40,34 @@ const payloadSchema = z.object({
   /** The new project the restore lands in. Already created, in state `creating`. */
   targetProjectId: z.string().uuid(),
   sourceProjectId: z.string().uuid(),
-  /** Epoch millis to recover to. Omitted means the end of the WAL stream. */
+  /** Epoch millis to recover to. Omitted (with no LSN) means the end of the WAL stream. */
   targetTime: z.number().int().optional(),
+  /** A log position to recover to, and the backup set chosen to reach it. */
+  targetLsn: z.string().optional(),
+  backupSet: z.string().optional(),
 });
+
+/** Where recovery should stop. Undefined replays everything that was archived. */
+export type RecoveryTarget =
+  | { kind: "time"; at: number }
+  | { kind: "lsn"; lsn: string; backupSet: string | undefined };
+
+function targetFrom(payload: Payload): RecoveryTarget | undefined {
+  if (payload.targetLsn) return { kind: "lsn", lsn: payload.targetLsn, backupSet: payload.backupSet };
+  if (payload.targetTime) return { kind: "time", at: payload.targetTime };
+  return undefined;
+}
+
+/**
+ * Marker for "still depends on the source's repository", kept in
+ * `sourceRepoVolumeName`. For a local repository it is literally the volume
+ * mounted for recovery; for object storage there is no volume, but the
+ * dependency is just as real until this project has a backup of its own — and
+ * promote refuses while it is set.
+ */
+function sourceAttachment(spec: RepoSpec, volume: string): string {
+  return spec.type === "s3" && spec.s3 ? `s3://${spec.s3.bucket}${spec.path}` : volume;
+}
 type Payload = z.infer<typeof payloadSchema>;
 
 const STEPS = [
@@ -115,11 +144,14 @@ export function createRestoreRunHandler(
 
       const sourceBackupVolume = source.backupVolumeName ?? backupVolumeName(source.ref);
       const sourceStanza = backups.get(source.id)?.stanza ?? stanzaName(source.ref);
+      // The repository the source project actually archives to — its bucket
+      // if it is on object storage, not its backup volume.
+      const sourceRepo = sourceRepoForRestore(backups.repoSpec(source.id, source.ref));
       const targetStanza = stanzaName(target.ref);
       const labels = projectLabels(target.id, target.ref);
 
       // Mutable, because a target past the end of the WAL is retried without one.
-      let targetTime: number | undefined = payload.targetTime;
+      let recoveryTarget = targetFrom(payload);
       let unreachableTarget = false;
 
       let step =
@@ -149,7 +181,7 @@ export function createRestoreRunHandler(
         if (step < 2) {
           throwIfCancelled();
           checkpoint(progressFor(step, "Restoring files from the backup"));
-          await restoreFiles(deps, target, sourceStanza, sourceBackupVolume, labels, targetTime);
+          await restoreFiles(deps, target, sourceStanza, sourceRepo, sourceBackupVolume, labels, recoveryTarget);
           checkpoint(progressFor((step = 2), "Files restored"));
         }
 
@@ -162,6 +194,7 @@ export function createRestoreRunHandler(
             deps,
             backups,
             target.id,
+            sourceRepo,
             sourceBackupVolume,
           );
 
@@ -169,7 +202,7 @@ export function createRestoreRunHandler(
             .set({
               containerId,
               backupVolumeName: backupVolumeName(target.ref),
-              sourceRepoVolumeName: sourceBackupVolume,
+              sourceRepoVolumeName: sourceAttachment(sourceRepo, sourceBackupVolume),
               updatedAt: Date.now(),
             })
             .where(eq(projects.id, target.id))
@@ -206,14 +239,15 @@ export function createRestoreRunHandler(
               "recovery target is past the end of the WAL; restoring everything instead",
             );
             unreachableTarget = true;
-            targetTime = undefined;
+            recoveryTarget = undefined;
             await docker.stopContainer(containerId, 20).catch(() => {});
             await docker.removeContainer(containerId, { force: true });
-            await restoreFiles(deps, target, sourceStanza, sourceBackupVolume, labels, undefined);
+            await restoreFiles(deps, target, sourceStanza, sourceRepo, sourceBackupVolume, labels, undefined);
             const restarted = await startRecoveryContainer(
               deps,
               backups,
               target.id,
+              sourceRepo,
               sourceBackupVolume,
             );
             db.update(projects)
@@ -281,7 +315,7 @@ export function createRestoreRunHandler(
         if (step < 6) {
           throwIfCancelled();
           checkpoint(progressFor(step, "Detaching from the source project"));
-          await detachSourceRepo(deps, backups, target.id);
+          await detachSourceRepo(deps, backups, target.id, logger);
           checkpoint(progressFor((step = 6), "Detached"));
         }
 
@@ -295,13 +329,20 @@ export function createRestoreRunHandler(
         });
 
         logger.info(
-          { target: target.ref, source: source.ref, targetTime: payload.targetTime ?? "latest" },
+          {
+            target: target.ref,
+            source: source.ref,
+            sourceRepo: sourceRepo.type,
+            targetTime: payload.targetTime ?? null,
+            targetLsn: payload.targetLsn ?? null,
+            unreachableTarget,
+          },
           "restore complete",
         );
         return {
           percent: 100,
           message: unreachableTarget
-            ? "Restore complete — the requested time was after the last recorded transaction, so everything was restored"
+            ? "Restore complete — the requested point was after the last recorded transaction, so everything was restored"
             : "Restore complete",
           checkpoint: { completedSteps: 6 },
         };
@@ -413,11 +454,34 @@ async function detachSourceRepo(
   deps: JobDeps,
   backups: BackupService,
   projectId: string,
+  logger: JobContext<Payload>["logger"],
 ): Promise<void> {
   const { db, config, docker } = deps;
 
   const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
   if (!project?.sourceRepoVolumeName) return;
+
+  // pgBackRest wrote restore_command into postgresql.auto.conf, where it
+  // outlives the recovery that needed it — naming a repository this project
+  // must no longer depend on, and, for object storage, environment variables
+  // that are about to disappear. Recovery is over, so it is cleared; the
+  // container recreate below picks the change up. Not fatal: the setting is
+  // inert outside recovery, and failing the restore over it would be worse.
+  if (project.containerId) {
+    const reset = await docker
+      .exec(
+        project.containerId,
+        ["psql", "-U", DEFAULT_ROLE, "-d", DEFAULT_DATABASE, "-tAX", "-c", "ALTER SYSTEM RESET restore_command"],
+        { user: "postgres" },
+      )
+      .catch((err: unknown) => ({ exitCode: -1, stdout: "", stderr: String(err) }));
+    if (reset.exitCode !== 0) {
+      logger.warn(
+        { ref: project.ref, error: reset.stderr.trim() },
+        "could not clear restore_command after recovery",
+      );
+    }
+  }
 
   // Recreating without the source repository mount. Through the shared builder,
   // which omits it by default — so this is simply "build the normal spec".
@@ -434,16 +498,17 @@ async function restoreFiles(
   deps: JobDeps,
   target: { ref: string; image: string; memoryBytes: number; nanoCpus: number },
   sourceStanza: string,
+  sourceRepo: RepoSpec,
   sourceBackupVolume: string,
   labels: Record<string, string>,
-  targetTime: number | undefined,
+  recoveryTarget: RecoveryTarget | undefined,
 ): Promise<void> {
   const { config, docker } = deps;
 
   const restoreEnv = backupEnv({
     stanza: sourceStanza,
     // The source repository is repo1 for this container, which only reads.
-    repo: { type: "posix", path: SOURCE_REPO_MOUNT },
+    repo: sourceRepo,
     retentionFull: config.backups.retentionFull,
   });
 
@@ -481,18 +546,16 @@ async function restoreFiles(
         // is named only here.
         `--recovery-option=restore_command=${sourceRestoreCommand({
           stanza: sourceStanza,
-          repoPath: SOURCE_REPO_MOUNT,
+          spec: sourceRepo,
         })}`,
-        // `--target-action` is only accepted alongside an explicit recovery
-        // target; with `--type=default` pgBackRest rejects it outright.
-        ...(targetTime
-          ? ["--type=time", `--target=${toPgBackRestTime(targetTime)}`, "--target-action=promote"]
-          : ["--type=default"]),
+        ...recoveryTargetArgs(recoveryTarget),
       ],
       env: restoreEnv,
       labels: { ...labels, "io.justpostgres.role": "restore" },
       volumes: { [volumeName(target.ref)]: DATA_MOUNT },
-      readOnlyVolumes: { [sourceBackupVolume]: SOURCE_REPO_MOUNT },
+      ...(needsSourceVolume(sourceRepo)
+        ? { readOnlyVolumes: { [sourceBackupVolume]: SOURCE_REPO_MOUNT } }
+        : {}),
       memoryBytes: target.memoryBytes,
       nanoCpus: target.nanoCpus,
       restartPolicy: "no",
@@ -505,11 +568,33 @@ async function restoreFiles(
   }
 }
 
+/**
+ * pgBackRest's recovery-target options.
+ *
+ * `--target-action` is only accepted alongside an explicit recovery target;
+ * with `--type=default` pgBackRest rejects it outright. A log-position target
+ * names its backup set, because pgBackRest only auto-selects one for time
+ * targets (see backupForLsn).
+ */
+export function recoveryTargetArgs(target: RecoveryTarget | undefined): string[] {
+  if (!target) return ["--type=default"];
+  if (target.kind === "time") {
+    return ["--type=time", `--target=${toPgBackRestTime(target.at)}`, "--target-action=promote"];
+  }
+  return [
+    "--type=lsn",
+    `--target=${target.lsn}`,
+    "--target-action=promote",
+    ...(target.backupSet ? [`--set=${target.backupSet}`] : []),
+  ];
+}
+
 /** Create and start the container that will replay WAL and promote. */
 async function startRecoveryContainer(
   deps: JobDeps,
   backups: BackupService,
   projectId: string,
+  sourceRepo: RepoSpec,
   sourceBackupVolume: string,
 ): Promise<string> {
   const { db, config, docker } = deps;
@@ -520,14 +605,19 @@ async function startRecoveryContainer(
   const existing = await docker.listContainers({ "io.justpostgres.project-id": projectId });
   const adopted = existing.find((c) => c.name === containerName(project.ref));
 
-  // The only spec that differs from an ordinary project: the source
-  // repository, mounted read-only so restore_command can replay its WAL. The
-  // builder takes it as an option rather than this rebuilding the whole spec.
+  // The only spec that differs from an ordinary project: access to the source
+  // repository so restore_command can replay its WAL — the volume mounted
+  // read-only for a local repository, or the bucket's credentials (under names
+  // pgBackRest does not read on its own) for object storage. The builder takes
+  // these as options rather than this rebuilding the whole spec.
   const containerId =
     adopted?.id ??
     (await docker.createContainer(
       buildProjectContainerSpec({ db, config, backups }, project, {
-        readOnlyVolumes: { [sourceBackupVolume]: SOURCE_REPO_MOUNT },
+        ...(needsSourceVolume(sourceRepo)
+          ? { readOnlyVolumes: { [sourceBackupVolume]: SOURCE_REPO_MOUNT } }
+          : {}),
+        extraEnv: sourceRepoSecretEnv(sourceRepo),
       }),
     ));
 

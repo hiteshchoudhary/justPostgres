@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { LSN_PATTERN } from "@justpostgres/shared";
 import { clientIp } from "../../auth/middleware.js";
 import { audit } from "../../lib/audit.js";
 import { ProjectError } from "../../projects/service.js";
@@ -10,7 +11,16 @@ import { DiskSpaceError } from "../../storage/disk.js";
 const restoreSchema = z.object({
   /** Epoch millis. Omitted restores to the end of the WAL stream. */
   targetTime: z.number().int().positive().optional(),
+  /** A Postgres log position, e.g. `16/B374D848`. Exclusive with targetTime. */
+  targetLsn: z
+    .string()
+    .trim()
+    .regex(LSN_PATTERN, "Expected a log position like 16/B374D848.")
+    .transform((lsn) => lsn.toUpperCase())
+    .optional(),
   name: z.string().trim().min(1).max(64).optional(),
+}).refine((body) => !(body.targetTime !== undefined && body.targetLsn !== undefined), {
+  message: "Choose a point in time or a log position, not both.",
 });
 
 const configSchema = z.object({
@@ -109,7 +119,20 @@ export function backupRoutes() {
    * run against a database that is still serving traffic.
    */
   app.post("/:id/restore", async (c) => {
-    const body = restoreSchema.safeParse(await c.req.json().catch(() => ({})));
+    // An empty body legitimately means "restore everything". A body that is
+    // not JSON must not mean the same thing: falling back to `{}` turned a
+    // malformed point-in-time request into a full restore — a whole new
+    // project, built from the end of the archive the caller did not ask for.
+    const raw = await c.req.text();
+    let parsed: unknown = {};
+    if (raw.trim()) {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw new HttpError(400, "bad_request", "The request body is not valid JSON.");
+      }
+    }
+    const body = restoreSchema.safeParse(parsed);
     if (!body.success) throw HttpError.badRequest(body.error);
 
     const ctx = c.get("ctx");
@@ -123,7 +146,12 @@ export function backupRoutes() {
         actor: admin.email,
         action: "restore.started",
         projectId: c.req.param("id"),
-        payload: { into: project.id, ref: project.ref, targetTime: body.data.targetTime ?? null },
+        payload: {
+          into: project.id,
+          ref: project.ref,
+          targetTime: body.data.targetTime ?? null,
+          targetLsn: body.data.targetLsn ?? null,
+        },
         ip: clientIp(c),
       });
       return c.json({ project }, 201);
@@ -174,8 +202,18 @@ export function backupRoutes() {
 
     const config = ctx.backups.get(projectId);
     if (!config) throw HttpError.notFound("backup configuration");
-    if (config.repoType === "s3") {
+    // A move that failed partway leaves the project pointed at the bucket but
+    // with no backup in it (`awaitingFirstBackup`). That has to be retryable:
+    // refusing every project whose type already reads "s3" left a failed move
+    // stuck for good, unprotected, with no button to finish it.
+    if (config.repoType === "s3" && !config.awaitingFirstBackup) {
       throw new HttpError(409, "already_migrated", "This project already backs up to object storage.");
+    }
+    const inFlight = ctx.queue
+      .list({ projectId, limit: 50 })
+      .some((job) => job.type === "backup.migrate" && (job.state === "queued" || job.state === "running"));
+    if (inFlight) {
+      throw new HttpError(409, "conflict", "This project's backups are already being moved.");
     }
 
     const job = ctx.queue.enqueue({
@@ -183,7 +221,10 @@ export function backupRoutes() {
       projectId,
       payload: { projectId },
       priority: 8,
-      maxAttempts: 1,
+      // Every step is checkpointed and safe to repeat, so a transient failure
+      // (the bucket briefly unreachable, a slow restart) retries instead of
+      // stranding the project half-moved.
+      maxAttempts: 3,
     });
 
     audit(ctx.db.db, {

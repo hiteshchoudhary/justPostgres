@@ -80,6 +80,12 @@ const schema = z.object({
   JP_BACKUP_RETENTION_FULL: z.coerce.number().int().min(1).max(9999).default(4),
   /** How long a backup or restore may run before the job gives up. */
   JP_BACKUP_TIMEOUT_MS: z.coerce.number().int().min(60_000).default(6 * 3600_000),
+  /**
+   * Postgres `archive_timeout`: the most seconds of committed work a host loss
+   * can take with it. Below 5 the archive fills with forced, near-empty
+   * segments faster than it buys anything.
+   */
+  JP_BACKUP_ARCHIVE_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
   /** How often to prove a backup still restores. 0 disables it. */
   JP_RESTORE_CHECK_INTERVAL_HOURS: z.coerce.number().int().min(0).default(168),
 
@@ -237,6 +243,7 @@ export interface Config {
     fullEveryDays: number;
     retentionFull: number;
     timeoutMs: number;
+    archiveTimeoutSeconds: number;
     restoreCheckIntervalHours: number;
     s3: {
       bucket?: string;
@@ -389,6 +396,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       fullEveryDays: c.JP_BACKUP_FULL_EVERY_DAYS,
       retentionFull: c.JP_BACKUP_RETENTION_FULL,
       timeoutMs: c.JP_BACKUP_TIMEOUT_MS,
+      archiveTimeoutSeconds: c.JP_BACKUP_ARCHIVE_TIMEOUT_SECONDS,
       restoreCheckIntervalHours: c.JP_RESTORE_CHECK_INTERVAL_HOURS,
       s3: {
         ...(c.JP_BACKUP_S3_BUCKET ? { bucket: c.JP_BACKUP_S3_BUCKET } : {}),

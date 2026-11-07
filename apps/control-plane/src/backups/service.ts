@@ -13,6 +13,7 @@ import {
   backupEnv,
   parseInfo,
   recoveryWindow,
+  REPO_MOUNT,
   repoSpecFor,
   runPgBackRest,
   type RecoveryWindow,
@@ -120,6 +121,16 @@ export class BackupService {
     const row = this.get(projectId);
     if (row?.repoConfigEnc) {
       return JSON.parse(decryptSecret(row.repoConfigEnc, this.config.masterKey)) as RepoSpec;
+    }
+    // A row with no stored repository is a local-disk project: `initialise`
+    // stores the spec whenever there is one to store. It must stay local.
+    // Falling through to the *current* default here meant that configuring
+    // object storage silently repointed every existing local project at the
+    // bucket — its restores read a stanza that does not exist there, and the
+    // next container rebuild (an extension, a promote) moved archive_command to
+    // a repository with nothing in it.
+    if (row) {
+      return { type: "posix", path: REPO_MOUNT };
     }
     // No row yet — which is the normal case while a project is still being
     // provisioned, because the container is created before archiving is

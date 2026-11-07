@@ -35,6 +35,12 @@ export interface BackupSetInfo {
   databaseSizeBytes: number;
   walStart: string | null;
   walStop: string | null;
+  /**
+   * Log positions the backup spans, as Postgres prints them (`16/B374D848`).
+   * A restore to a log position needs a backup that *stopped* at or before it.
+   */
+  lsnStart: string | null;
+  lsnStop: string | null;
 }
 
 export interface StanzaInfo {
@@ -92,10 +98,19 @@ export interface RestoreCheck {
 }
 
 export interface RestoreRequest {
-  /** Epoch millis. Omitted restores to the end of the WAL stream. */
+  /** Epoch millis. Omitted (with no `targetLsn`) restores to the end of the WAL stream. */
   targetTime?: number;
+  /**
+   * A Postgres log position (`16/B374D848`), e.g. from `pg_current_wal_lsn()`
+   * or a log line. Precise where a timestamp is not: it can stop between two
+   * transactions that committed in the same second. Exclusive with `targetTime`.
+   */
+  targetLsn?: string;
   name?: string;
 }
+
+/** The text form of a Postgres LSN: two hex numbers of up to 8 digits. */
+export const LSN_PATTERN = /^[0-9A-Fa-f]{1,8}\/[0-9A-Fa-f]{1,8}$/;
 
 /**
  * Where backups are written, when they are not written to a local directory.

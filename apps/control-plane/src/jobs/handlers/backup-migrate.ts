@@ -8,6 +8,7 @@ import { backupConfigs, projects } from "../../db/schema.js";
 import { encryptSecret } from "../../lib/crypto.js";
 import { recreateProjectContainer } from "../../projects/container.js";
 import type { JobDeps } from "../deps.js";
+import { waitForPostgres } from "./project-create.js";
 import { type JobContext, type JobHandler } from "../registry.js";
 
 const payloadSchema = z.object({ projectId: z.string().uuid() });
@@ -48,7 +49,7 @@ export function createBackupMigrateHandler(
     type: "backup.migrate",
     payloadSchema,
 
-    async run({ payload, logger, resumeFrom, checkpoint, throwIfCancelled }: JobContext<Payload>) {
+    async run({ payload, logger, signal, resumeFrom, checkpoint, throwIfCancelled }: JobContext<Payload>) {
       const project = db.select().from(projects).where(eq(projects.id, payload.projectId)).get();
       if (!project || project.deletedAt) {
         return { percent: 100, message: "Project no longer exists", checkpoint: {} };
@@ -104,6 +105,14 @@ export function createBackupMigrateHandler(
         .where(eq(projects.id, project.id))
         .get()?.id;
       if (!containerId) throw new Error("The project lost its container.");
+
+      // A started container is not a running cluster. stanza-create talks to
+      // Postgres, and issued the instant the container was recreated it failed
+      // with "unable to find primary cluster" — every time, on a fast machine —
+      // leaving the project pointed at a bucket with no stanza in it. Waited
+      // for on every attempt, including a resumed one, since the container may
+      // have restarted in between.
+      await waitForPostgres(deps, containerId, signal, logger);
 
       // ---- 3. Create the stanza in the new repository ----------------------
       if (step < 3) {

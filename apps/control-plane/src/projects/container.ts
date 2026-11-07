@@ -19,6 +19,12 @@ import {
 export interface ProjectContainerOptions {
   /** Extra read-only mounts, e.g. a source project's repository during a restore. */
   readOnlyVolumes?: Record<string, string>;
+  /**
+   * Extra environment, e.g. a source repository's credentials while a restore
+   * recovers. Merged after the defaults; dropped the next time the container is
+   * rebuilt without it.
+   */
+  extraEnv?: Record<string, string>;
   /** Overrides the libraries stored on the project row. */
   preloadLibraries?: string[];
   /** Additional `-c name=value` settings appended after the defaults. */
@@ -72,6 +78,7 @@ export function buildProjectContainerSpec(
         repo: backups.repoSpec(project.id, project.ref),
         retentionFull: config.backups.retentionFull,
       }),
+      ...options.extraEnv,
     },
     labels: projectLabels(project.id, project.ref),
     volumes: { [names.volume]: DATA_MOUNT, [names.backupVolume]: REPO_MOUNT },
@@ -80,7 +87,7 @@ export function buildProjectContainerSpec(
     portBindAddress: config.projectBindAddr,
     network: names.network,
     command: [
-      ...archivingPostgresArgs(stanza),
+      ...archivingPostgresArgs(stanza, config.backups.archiveTimeoutSeconds),
       ...preloadArgs(preload),
       ...Object.entries(options.extraSettings ?? {}).flatMap(([k, v]) => ["-c", `${k}=${v}`]),
     ],

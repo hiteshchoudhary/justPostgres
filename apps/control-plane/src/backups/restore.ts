@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import type { Project } from "@justpostgres/shared";
+import { LSN_PATTERN, type Project } from "@justpostgres/shared";
+import { backupForLsn } from "./pgbackrest.js";
 import type { Config } from "../config.js";
 import type { Db } from "../db/index.js";
 import { credentials, projects, type ProjectRow } from "../db/schema.js";
@@ -24,8 +25,10 @@ import type { BackupService } from "./service.js";
 
 export interface RestoreRequest {
   sourceProjectId: string;
-  /** Epoch millis. Omitted restores to the end of the WAL stream. */
+  /** Epoch millis. Omitted (with no `targetLsn`) restores to the end of the WAL stream. */
   targetTime?: number;
+  /** A Postgres log position. Exclusive with `targetTime`. */
+  targetLsn?: string;
   name?: string;
 }
 
@@ -80,9 +83,16 @@ export class RestoreService {
     // still sitting in the repository, so a plausible-looking timestamp from
     // last week refers to a backup that cannot restore into the version running
     // now.
+    if (request.targetTime !== undefined && request.targetLsn !== undefined) {
+      throw new ProjectError("invalid_request", "Choose a point in time or a log position, not both.");
+    }
     if (request.targetTime !== undefined) {
       await this.assertWithinWindow(source.id, request.targetTime);
     }
+    // The backup to start from is chosen now, not left to pgBackRest — see
+    // backupForLsn for why it would otherwise pick wrong.
+    const backupSet =
+      request.targetLsn !== undefined ? await this.backupSetForLsn(source.id, request.targetLsn) : undefined;
 
     const credential = this.db
       .select()
@@ -98,10 +108,12 @@ export class RestoreService {
 
     const name =
       request.name?.trim() ||
-      `${source.name}-restored-${new Date(request.targetTime ?? now)
-        .toISOString()
-        .slice(11, 16)
-        .replace(":", "")}`;
+      (request.targetLsn
+        ? `${source.name}-restored-${request.targetLsn.replace("/", "-").toLowerCase()}`
+        : `${source.name}-restored-${new Date(request.targetTime ?? now)
+            .toISOString()
+            .slice(11, 16)
+            .replace(":", "")}`);
 
     const row = this.db.transaction((tx) => {
       const created = tx
@@ -163,32 +175,57 @@ export class RestoreService {
         targetProjectId: id,
         sourceProjectId: source.id,
         ...(request.targetTime ? { targetTime: request.targetTime } : {}),
+        ...(request.targetLsn ? { targetLsn: request.targetLsn, backupSet } : {}),
       },
       priority: 10,
       maxAttempts: 2,
     });
 
     this.logger.info(
-      { target: ref, source: source.ref, targetTime: request.targetTime ?? "latest", actor },
+      {
+        target: ref,
+        source: source.ref,
+        targetTime: request.targetTime ?? null,
+        targetLsn: request.targetLsn ?? null,
+        actor,
+      },
       "restore enqueued",
     );
     return toProject(row);
   }
 
   /**
-   * Swap two projects' public identity.
+   * Validate a log-position target and name the backup set to restore from.
    *
-   * A restore is only half a recovery: the new project holds the right data but
-   * answers on a different hostname and port, so every application would still
-   * need a config change to reach it. Promote exchanges the `ref` and published
-   * port of the restored project and its source, so the restored data answers
-   * where the application is already looking.
-   *
-   * Physical objects — containers, volumes, the pgBackRest stanza — keep their
-   * original names. Renaming a volume is not a thing Docker does, and it does
-   * not need to be: `ref` is a routing label, and the row records the physical
-   * names separately.
+   * Only the lower bound is checked. A position past the end of the archive is
+   * caught by the job, which restores everything instead — the same reading a
+   * too-late timestamp gets, and almost always what was meant.
    */
+  private async backupSetForLsn(projectId: string, lsn: string): Promise<string> {
+    if (!LSN_PATTERN.test(lsn)) {
+      throw new ProjectError("invalid_request", `"${lsn}" is not a log position; expected something like 16/B374D848.`);
+    }
+    const info = await this.backups.stanzaInfo(projectId).catch(() => null);
+    const choice = backupForLsn(info ?? undefined, lsn);
+    if (choice.ok) return choice.label;
+
+    switch (choice.reason) {
+      case "no_backups":
+        throw new ProjectError("invalid_state", "There is no restorable backup for this project yet.");
+      case "no_lsn_info":
+        throw new ProjectError(
+          "invalid_state",
+          "The backup repository does not report log positions for its backups, so a log-position " +
+            "restore cannot pick a starting backup. Restore to a point in time instead.",
+        );
+      case "before_window":
+        throw new ProjectError(
+          "invalid_request",
+          `That log position is before the recovery window, which starts at ${choice.earliest}.`,
+        );
+    }
+  }
+
   /**
    * Refuse a recovery target the repository cannot actually reach.
    *
@@ -236,6 +273,20 @@ export class RestoreService {
     }
   }
 
+  /**
+   * Swap two projects' public identity.
+   *
+   * A restore is only half a recovery: the new project holds the right data but
+   * answers on a different hostname and port, so every application would still
+   * need a config change to reach it. Promote exchanges the `ref` and published
+   * port of the restored project and its source, so the restored data answers
+   * where the application is already looking.
+   *
+   * Physical objects — containers, volumes, the pgBackRest stanza — keep their
+   * original names. Renaming a volume is not a thing Docker does, and it does
+   * not need to be: `ref` is a routing label, and the row records the physical
+   * names separately.
+   */
   async promote(restoredProjectId: string, actor: string): Promise<{ promoted: Project; demoted: Project }> {
     const restored = this.db.select().from(projects).where(eq(projects.id, restoredProjectId)).get();
     if (!restored || restored.deletedAt) throw new ProjectError("not_found", "No such project.");

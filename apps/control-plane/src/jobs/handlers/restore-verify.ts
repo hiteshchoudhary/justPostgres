@@ -1,7 +1,13 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type { JobProgress } from "@justpostgres/shared";
-import { backupEnv, SOURCE_REPO_MOUNT, summariseFailure } from "../../backups/pgbackrest.js";
+import {
+  backupEnv,
+  needsSourceVolume,
+  SOURCE_REPO_MOUNT,
+  sourceRepoForRestore,
+  summariseFailure,
+} from "../../backups/pgbackrest.js";
 import type { BackupService } from "../../backups/service.js";
 import { projects } from "../../db/schema.js";
 import {
@@ -83,9 +89,19 @@ export function createRestoreVerifyHandler(deps: JobDeps, backups: BackupService
           "io.justpostgres.project-id": project.id,
         });
 
+        // The repository the project really archives to. This was hardcoded to
+        // the local volume, so for a project on object storage verification
+        // either failed against an empty volume or — for one moved there —
+        // restored the pre-move backups still on it and reported the project
+        // healthy. A check that can pass for the wrong reason is worse than none.
+        const repo = sourceRepoForRestore(backups.repoSpec(project.id, project.ref));
+        const repoMount = needsSourceVolume(repo)
+          ? { readOnlyVolumes: { [names.backupVolume]: SOURCE_REPO_MOUNT } }
+          : {};
+
         const restoreEnv = backupEnv({
           stanza: backupConfig.stanza,
-          repo: { type: "posix", path: SOURCE_REPO_MOUNT },
+          repo,
           retentionFull: backupConfig.retentionFull,
         });
 
@@ -102,7 +118,7 @@ export function createRestoreVerifyHandler(deps: JobDeps, backups: BackupService
             env: restoreEnv,
             labels: { "io.justpostgres.managed": "true", "io.justpostgres.role": "verify" },
             volumes: { [scratchVolume]: DATA_MOUNT },
-            readOnlyVolumes: { [names.backupVolume]: SOURCE_REPO_MOUNT },
+            ...repoMount,
             memoryBytes: project.memoryBytes,
             nanoCpus: project.nanoCpus,
             restartPolicy: "no",
@@ -130,7 +146,7 @@ export function createRestoreVerifyHandler(deps: JobDeps, backups: BackupService
           },
           labels: { "io.justpostgres.managed": "true", "io.justpostgres.role": "verify" },
           volumes: { [scratchVolume]: DATA_MOUNT },
-          readOnlyVolumes: { [names.backupVolume]: SOURCE_REPO_MOUNT },
+          ...repoMount,
           command: ["-c", "archive_mode=off"],
           memoryBytes: project.memoryBytes,
           nanoCpus: project.nanoCpus,

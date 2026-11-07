@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Badge, Button, Card, Input, Loading, Modal, PageHeader, formatBytes, relativeTime } from "../components/ui.js";
+import { LSN_PATTERN } from "@justpostgres/shared";
 import { api, ApiError } from "../lib/api.js";
 
 function formatWhen(ms: number | null): string {
@@ -26,14 +27,17 @@ function RestoreModal({
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<"latest" | "time">("time");
+  const [mode, setMode] = useState<"latest" | "time" | "lsn">("time");
   const [when, setWhen] = useState(toLocalInputValue(recoveryWindow.latest ?? Date.now()));
+  const [lsn, setLsn] = useState("");
   const [name, setName] = useState("");
+  const lsnInvalid = mode === "lsn" && !LSN_PATTERN.test(lsn.trim());
 
   const restore = useMutation({
     mutationFn: () =>
       api.restore(projectId, {
         ...(mode === "time" ? { targetTime: new Date(when).getTime() } : {}),
+        ...(mode === "lsn" ? { targetLsn: lsn.trim() } : {}),
         ...(name.trim() ? { name: name.trim() } : {}),
       }),
     onSuccess: (data) => {
@@ -51,7 +55,7 @@ function RestoreModal({
     >
       <div className="space-y-4">
         <div className="flex gap-1">
-          {(["time", "latest"] as const).map((option) => (
+          {(["time", "lsn", "latest"] as const).map((option) => (
             <button
               key={option}
               onClick={() => setMode(option)}
@@ -61,12 +65,20 @@ function RestoreModal({
                   : "text-content-muted hover:text-content"
               }`}
             >
-              {option === "time" ? "A point in time" : "Everything, up to now"}
+              {option === "time" ? "A point in time" : option === "lsn" ? "A log position" : "Everything, up to now"}
             </button>
           ))}
         </div>
 
-        {mode === "time" ? (
+        {mode === "lsn" ? (
+          <Input
+            label="Restore to log position"
+            value={lsn}
+            onChange={(e) => setLsn(e.target.value)}
+            placeholder="16/B374D848"
+            hint="From pg_current_wal_lsn() or a Postgres log line. Stops exactly there, even between two transactions that committed in the same second."
+          />
+        ) : mode === "time" ? (
           <Input
             label="Restore to"
             type="datetime-local"
@@ -98,7 +110,7 @@ function RestoreModal({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={restore.isPending} onClick={() => restore.mutate()}>
+          <Button loading={restore.isPending} disabled={lsnInvalid} onClick={() => restore.mutate()}>
             {restore.isPending ? "Starting…" : "Restore"}
           </Button>
         </div>
@@ -132,10 +144,23 @@ function StrandedNote({ count }: { count: number }) {
  * is not already using it — an offer nobody can act on is noise, and the place
  * to configure storage is once, on the Instance page, not once per project.
  */
-function MoveToObjectStorage({ projectId, repoType }: { projectId: string; repoType: string }) {
+function MoveToObjectStorage({
+  projectId,
+  repoType,
+  awaitingFirstBackup,
+}: {
+  projectId: string;
+  repoType: string;
+  awaitingFirstBackup: boolean;
+}) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const storage = useQuery({ queryKey: ["object-storage"], queryFn: api.objectStorage });
+  const jobs = useQuery({
+    queryKey: ["jobs", projectId],
+    queryFn: () => api.jobsForProject(projectId),
+    enabled: repoType === "s3" && awaitingFirstBackup,
+  });
 
   const migrate = useMutation({
     mutationFn: () => api.migrateBackupsToObjectStorage(projectId),
@@ -148,7 +173,54 @@ function MoveToObjectStorage({ projectId, repoType }: { projectId: string; repoT
   });
 
   const configured = Boolean(storage.data?.settings);
-  if (!configured || repoType === "s3") return null;
+
+  // A move that failed partway: pointed at the bucket, nothing restorable in
+  // it. Without this the project sat unprotected with no way to finish.
+  const lastMove = jobs.data?.jobs.find((job) => job.type === "backup.migrate");
+  if (repoType === "s3" && awaitingFirstBackup && lastMove?.state === "failed") {
+    return (
+      <Card className="mb-4 border-danger/30 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="max-w-2xl">
+            <h3 className="text-sm font-medium">Moving backups to object storage did not finish</h3>
+            <p className="mt-1 text-xs text-content-muted">
+              This project now archives to the bucket but has no backup there yet, so it cannot be restored
+              until the move completes. Retrying picks up where it stopped.
+            </p>
+            {lastMove.lastError ? (
+              <pre className="mt-2 whitespace-pre-wrap text-xs text-danger">{lastMove.lastError}</pre>
+            ) : null}
+            {error ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
+          </div>
+          <Button onClick={() => migrate.mutate()} loading={migrate.isPending}>
+            {migrate.isPending ? "Retrying…" : "Retry the move"}
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  if (repoType === "s3" || storage.isLoading) return null;
+
+  // Local-only backups are the default, and they are not disaster recovery:
+  // the recovery window is real right up until the disk it lives on dies. Say
+  // so where the window is shown, rather than only in the install guide.
+  if (!configured) {
+    return (
+      <Card className="mb-4 border-warn/30 p-4">
+        <h3 className="text-sm font-medium">Backups are on this host only</h3>
+        <p className="mt-1 max-w-2xl text-xs text-content-muted">
+          Point-in-time restore protects against mistakes — a dropped table, a bad migration. It does not
+          survive losing this machine, because the backups live on the same disk as the database.
+          Configure object storage (S3, R2 or any S3-compatible bucket) on the{" "}
+          <Link to="/instance" className="underline">
+            Instance page
+          </Link>{" "}
+          to keep a copy off the host.
+        </p>
+      </Card>
+    );
+  }
 
   return (
     <Card className="mb-4 border-accent/30 p-4">
@@ -304,7 +376,7 @@ export default function BackupsPage() {
         </Card>
       </div>
 
-      <MoveToObjectStorage projectId={id} repoType={status.repoType} />
+      <MoveToObjectStorage projectId={id} repoType={status.repoType} awaitingFirstBackup={status.awaitingFirstBackup} />
 
       <Card className="mb-4 p-4">
         <div className="flex items-center justify-between">

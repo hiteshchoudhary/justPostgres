@@ -34,6 +34,8 @@ services:
       JP_PROJECT_CONNECT_HOST: ${JP_PROJECT_CONNECT_HOST:-host.docker.internal}
       JP_PORT_RANGE_START: ${JP_PORT_RANGE_START:-55000}
       JP_PORT_RANGE_END: ${JP_PORT_RANGE_END:-55999}
+      # Seconds of committed work a host loss can take with it (WAL archive_timeout).
+      JP_BACKUP_ARCHIVE_TIMEOUT_SECONDS: ${JP_BACKUP_ARCHIVE_TIMEOUT_SECONDS:-60}
     ports:
       # JP_HTTP_PORT is the host port; the container always listens on 3000.
       # Bound to loopback by default — put a TLS proxy in front rather than

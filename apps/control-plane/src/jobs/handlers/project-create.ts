@@ -166,6 +166,15 @@ export function createProjectCreateHandler(
           .where(eq(projects.id, project.id))
           .run();
 
+        // The first full backup, now. Archived WAL is useless without a base
+        // backup to replay it onto, so until this lands the project has no
+        // recovery point at all — and nothing else queued one: it waited for
+        // the periodic scheduler sweep, leaving every new project unprotected
+        // for up to fifteen minutes while the UI showed archiving as healthy.
+        if (backups.get(project.id)?.awaitingFirstBackup) {
+          backups.scheduleRun(project.id, { type: "full" });
+        }
+
         logger.info({ ref, port: project.hostPort }, "project provisioned");
         return { percent: 100, message: "Project is running", checkpoint: { completedSteps: 7 } };
       } catch (err) {
@@ -258,7 +267,7 @@ async function ensureContainer(
  * before `pg_isready` succeeds would hand the user a connection string that
  * refuses connections.
  */
-async function waitForPostgres(
+export async function waitForPostgres(
   deps: JobDeps,
   containerId: string,
   signal: AbortSignal,

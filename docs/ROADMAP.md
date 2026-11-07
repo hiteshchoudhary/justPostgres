@@ -671,6 +671,37 @@ objects to the bucket. A project created afterwards went straight there with no 
 point-in-time restore **rebuilt a 200,314-row database entirely from object storage** into a new
 project, which is the only test that actually matters.
 
+**Correction (PITR audit).** That restore did not come from object storage. Restore and restore
+verification both read every source repository as the local backup volume, and the project in that
+test had been *moved* from local disk — so the restore rebuilt it from the pre-move backups still on
+the volume, which happened to contain the rows. A project created on S3 could not be restored at all,
+and a moved project restored a copy that silently stopped at the moment of the move, while
+verification, hardcoded the same way, reported it healthy. Found alongside it:
+
+1. **Configuring object storage repointed existing local projects.** A local project's row stores no
+   repository, and the lookup fell through to the *current* default — so after S3 was configured,
+   every local project resolved to the bucket. Restores failed with "no backup set found", and any
+   container rebuild would have moved `archive_command` to a repository with no stanza.
+2. **Moving to object storage always failed.** `stanza-create` ran the instant the container was
+   recreated, before Postgres accepted connections ("unable to find primary cluster"), with
+   `maxAttempts: 1` and a route that refused to retry once the type read "s3" — leaving the project
+   pointed at an empty bucket, unprotected, with no way to finish.
+3. **New projects had no recovery point for up to fifteen minutes.** Nothing queued the first full
+   backup; it waited for the periodic scheduler sweep while the UI showed archiving as healthy.
+4. **A malformed restore body meant "restore everything".** Unparseable JSON fell back to `{}`.
+
+All fixed, plus log-position recovery targets, a configurable `archive_timeout`
+(`JP_BACKUP_ARCHIVE_TIMEOUT_SECONDS`), and a warning on the backups page while backups exist only on
+the host. Verified end to end against MinIO over TLS from an isolated control plane: time restore
+from local disk; local-source restore after object storage is configured; a moved project restored
+*including writes made after the move*; an S3-native project restored to a log position and to a
+time, each stopping exactly there; restore verification passing for both S3 cases; source
+credentials gone from the restored container after it detaches; and a before-window log position, a
+time-plus-log-position request and a malformed body each refused up front. The restore-command
+construction and backup selection now have unit tests, including one that runs the generated
+`restore_command` through `/bin/sh` against a stub to prove only the source repository reaches
+pgBackRest.
+
 ### Still to do
 
 - Observability dashboards per [ARCHITECTURE §9](ARCHITECTURE.md#9-observability)

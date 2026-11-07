@@ -269,8 +269,27 @@ In justpostgres, **a restore always produces a new project.** "Restore to 14:32 
 need, and then optionally **promote** it — which swaps the connection routing so the new project
 answers on the old project's hostname. Nothing is destroyed until you explicitly delete the old one.
 
-In-place restore exists as an advanced action behind a confirmation, because sometimes you really do
-want it. It is not the default path.
+In-place restore is **not implemented**. Restore-then-promote covers the same need — the promoted
+project answers on the old hostname and port — without a moment where the only copy of the data is
+being overwritten. If it is ever added, it belongs behind a confirmation, never as the default path.
+
+### Recovery targets and RPO
+
+A restore stops at a **point in time**, at a **log position** (`16/B374D848`, as printed by
+`pg_current_wal_lsn()` or a Postgres log line), or at the end of the archive. A log position is the
+precise one: it can stop between two transactions that committed in the same second. pgBackRest only
+auto-selects the backup set for *time* targets — for a log position it takes the newest, and if that
+backup ended after the requested position Postgres refuses to start. So the control plane picks the
+set itself (the newest backup whose stop LSN is at or before the target) and passes `--set`.
+
+The recovery point objective is `archive_timeout`, set from `JP_BACKUP_ARCHIVE_TIMEOUT_SECONDS`
+(default 60): a partly filled WAL segment is archived after at most that long, so it bounds what a host
+loss can take with it. It is not zero. Zero needs WAL streamed synchronously off the host
+(`pg_receivewal` or a synchronous standby), which this design does not do. Backups on the local
+repository do not survive the host at all; the backups page says so until object storage is set up.
+
+Every new project takes its first full backup as the last step of provisioning. WAL archived before
+that has no base backup to replay onto, so until then there is no recovery point.
 
 ### Branching is the same code path
 
@@ -340,6 +359,16 @@ and its *own* afterwards, and the obvious way to arrange that — configure both
 silently breaks archiving, because the restored cluster then tries to push its own WAL into the
 source project's repository under a stanza that does not exist there. The source repository is
 therefore named only on the `restore_command` line, never in the container's environment.
+
+That rule has two consequences learned later. The restore must read the source's *actual*
+repository — its bucket when it is on object storage, not its backup volume, which for a project moved
+to S3 still holds the stale pre-move backups and will restore them without complaint. And because the
+container's environment still describes the restored project's *own* repo1, `restore_command` clears
+every `PGBACKREST_REPO1_*` variable with `env -u` before naming the source. S3 credentials cannot go on
+pgBackRest's command line at all (it refuses secret options there), so they travel in the recovering
+container's environment under `JP_RESTORE_SOURCE_*` names pgBackRest does not read, are mapped onto
+pgBackRest's names inside `restore_command`, and disappear when the container is rebuilt after
+recovery. `restore_command` itself is reset once recovery is over.
 
 **A restore is not finished when the data is back.** The restored project still depends on the source
 project's repository volume until it has taken a full backup of its own; deleting the source before

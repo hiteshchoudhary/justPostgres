@@ -66,6 +66,8 @@ services:
       JP_PROJECT_CONNECT_HOST: host.docker.internal
       JP_PORT_RANGE_START: 55000
       JP_PORT_RANGE_END: 55999
+      # Seconds of committed work a host loss can take with it (WAL archive_timeout).
+      JP_BACKUP_ARCHIVE_TIMEOUT_SECONDS: 60
     ports:
       - "0.0.0.0:8080:3000"
     extra_hosts:

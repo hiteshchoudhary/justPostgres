@@ -112,13 +112,54 @@ function repoEnv(index: 1 | 2, spec: RepoSpec): Record<string, string> {
  *
  * Keeping the source repository visible only to this one command means
  * `archive_command` sees exactly one repository: the project's own.
+ *
+ * The container's environment still describes the *restored* project's own
+ * repo1, and pgBackRest merges environment with command line. So `env -u`
+ * clears every repo1 variable first: otherwise a restored project whose own
+ * repository is S3 would hand its bucket settings to a local-repository fetch,
+ * or its endpoint and port to a fetch from a different bucket.
+ *
+ * `spec` is the source repository as the restore sees it — pass it through
+ * {@link sourceRepoForRestore}.
  */
-export function sourceRestoreCommand(opts: { stanza: string; repoPath: string }): string {
+export function sourceRestoreCommand(opts: { stanza: string; spec: RepoSpec }): string {
+  const { spec } = opts;
+  const clear = REPO1_ENV_NAMES.flatMap((name) => ["-u", name]);
+
+  let repoArgs: string[];
+  let secrets: string[] = [];
+  if (spec.type === "posix") {
+    repoArgs = ["--repo1-type=posix", `--repo1-path=${shellSafe("path", spec.path)}`];
+  } else {
+    const s3 = spec.s3;
+    if (!s3) throw new Error("An s3 repository was requested without S3 settings.");
+    repoArgs = [
+      "--repo1-type=s3",
+      `--repo1-path=${shellSafe("path", spec.path)}`,
+      `--repo1-s3-bucket=${shellSafe("bucket", s3.bucket)}`,
+      `--repo1-s3-region=${shellSafe("region", s3.region)}`,
+      `--repo1-s3-uri-style=${s3.uriStyle === "path" ? "path" : "host"}`,
+      ...(s3.endpoint ? [`--repo1-s3-endpoint=${shellSafe("endpoint", s3.endpoint)}`] : []),
+      ...(s3.port ? [`--repo1-storage-port=${Math.trunc(s3.port)}`] : []),
+      `--repo1-storage-verify-tls=${s3.verifyTls ? "y" : "n"}`,
+    ];
+    // Expanded by the shell Postgres runs restore_command through, so the
+    // secrets live only in the container's environment — never in
+    // postgresql.auto.conf, which is part of the data directory and of every
+    // backup taken from it.
+    secrets = [
+      `PGBACKREST_REPO1_S3_KEY="$${SOURCE_S3_KEY_ENV}"`,
+      `PGBACKREST_REPO1_S3_KEY_SECRET="$${SOURCE_S3_SECRET_ENV}"`,
+    ];
+  }
+
   return [
+    "env",
+    ...clear,
+    ...secrets,
     "pgbackrest",
-    `--stanza=${opts.stanza}`,
-    `--repo1-path=${opts.repoPath}`,
-    "--repo1-type=posix",
+    `--stanza=${shellSafe("stanza", opts.stanza)}`,
+    ...repoArgs,
     `--pg1-path=${PGDATA}`,
     `--lock-path=${LOCK_PATH}`,
     "--log-level-console=warn",
@@ -129,8 +170,99 @@ export function sourceRestoreCommand(opts: { stanza: string; repoPath: string })
   ].join(" ");
 }
 
-/** Postgres settings that turn on continuous archiving into repo1. */
-export function archivingPostgresArgs(stanza: string): string[] {
+/**
+ * The source project's repository, as a restore container must see it.
+ *
+ * A local repository lives on the source's backup volume, which a restore
+ * mounts read-only at {@link SOURCE_REPO_MOUNT} — so its path changes. An
+ * object-storage repository is reached over the network and is used exactly as
+ * the source project stores it: same bucket, same per-project prefix.
+ *
+ * This used to be hardcoded to the local case, which made every restore of a
+ * project on S3 read the source's backup *volume* instead of its bucket. For a
+ * project created on S3 that volume is empty and the restore failed; for one
+ * moved to S3 it still held the pre-move backups, so the restore quietly
+ * rebuilt a stale copy that stopped at the moment of the move — and restore
+ * verification, which had the same hardcoding, reported it healthy.
+ */
+export function sourceRepoForRestore(spec: RepoSpec): RepoSpec {
+  return spec.type === "posix" ? { type: "posix", path: SOURCE_REPO_MOUNT } : spec;
+}
+
+/** Whether restoring from this repository needs the source's volume mounted. */
+export function needsSourceVolume(spec: RepoSpec): boolean {
+  return spec.type === "posix";
+}
+
+/**
+ * Environment variables carrying the source repository's S3 credentials into a
+ * recovering container.
+ *
+ * Deliberately *not* `PGBACKREST_*` names — pgBackRest would read those as the
+ * container's own repository and `archive_command` would push into the
+ * source's bucket. `restore_command` maps them onto pgBackRest's names for that
+ * one process. They travel through the environment at all because pgBackRest
+ * refuses secret options on the command line.
+ */
+export const SOURCE_S3_KEY_ENV = "JP_RESTORE_SOURCE_S3_KEY";
+export const SOURCE_S3_SECRET_ENV = "JP_RESTORE_SOURCE_S3_SECRET";
+
+export function sourceRepoSecretEnv(spec: RepoSpec): Record<string, string> {
+  if (spec.type !== "s3" || !spec.s3) return {};
+  return { [SOURCE_S3_KEY_ENV]: spec.s3.key, [SOURCE_S3_SECRET_ENV]: spec.s3.secret };
+}
+
+/**
+ * Every `PGBACKREST_REPO1_*` variable {@link backupEnv} can produce. Derived
+ * rather than listed, so an option added there cannot be forgotten here.
+ */
+const REPO1_ENV_NAMES: readonly string[] = Object.keys(
+  backupEnv({
+    stanza: "s",
+    retentionFull: 1,
+    repo: {
+      type: "s3",
+      path: "/",
+      s3: {
+        bucket: "b",
+        endpoint: "e",
+        port: 1,
+        region: "r",
+        key: "k",
+        secret: "s",
+        uriStyle: "path",
+        verifyTls: false,
+      },
+    },
+  }),
+).filter((name) => name.startsWith("PGBACKREST_REPO1_"));
+
+/**
+ * Values land inside single quotes in `postgresql.auto.conf` and then pass
+ * through `/bin/sh`, so anything outside this set is refused rather than
+ * escaped. Every real bucket, endpoint, region and prefix fits; one that does
+ * not is a misconfiguration better reported than smuggled through a shell.
+ */
+const SHELL_SAFE = /^[A-Za-z0-9._\-\/:]+$/;
+
+function shellSafe(name: string, value: string): string {
+  if (!SHELL_SAFE.test(value)) {
+    throw new Error(`The source repository's ${name} contains characters a restore command cannot carry.`);
+  }
+  return value;
+}
+
+/**
+ * Postgres settings that turn on continuous archiving into repo1.
+ *
+ * `archiveTimeoutSeconds` is the recovery point objective in all but name: a
+ * partly filled WAL segment is archived only when this many seconds pass, so
+ * it bounds how many seconds of committed transactions die with the host. An
+ * idle server does not switch segments, so a low value costs nothing when
+ * nothing is happening; under a trickle of writes each forced switch archives
+ * a mostly empty segment that pgBackRest compresses to almost nothing.
+ */
+export function archivingPostgresArgs(stanza: string, archiveTimeoutSeconds: number): string[] {
   return [
     "-c",
     "archive_mode=on",
@@ -144,7 +276,7 @@ export function archivingPostgresArgs(stanza: string): string[] {
     // Postgres retries archiving on its own; what it will not do is let pg_wal
     // grow without bound, which is why archiving failure is an alert.
     "-c",
-    "archive_timeout=60",
+    `archive_timeout=${archiveTimeoutSeconds}`,
   ];
 }
 
@@ -233,6 +365,7 @@ interface RawInfo {
     timestamp: { start: number; stop: number };
     info?: { size?: number; repository?: { delta?: number; size?: number } };
     archive?: { start?: string | null; stop?: string | null };
+    lsn?: { start?: string | null; stop?: string | null };
     database?: { id?: number };
   }>;
   archive?: Array<{ min?: string | null; max?: string | null }>;
@@ -261,6 +394,8 @@ export function parseInfo(stdout: string): StanzaInfo[] {
       databaseSizeBytes: backup.info?.size ?? 0,
       walStart: backup.archive?.start ?? null,
       walStop: backup.archive?.stop ?? null,
+      lsnStart: backup.lsn?.start ?? null,
+      lsnStop: backup.lsn?.stop ?? null,
     })),
     archive: (stanza.archive ?? []).map((a) => ({ min: a.min ?? null, max: a.max ?? null })),
   }));
@@ -307,6 +442,49 @@ export function recoveryWindow(stanza: StanzaInfo | undefined, archivingHealthy:
     strandedByUpgrade,
     empty: false,
   };
+}
+
+/** An LSN as one comparable number. `16/B374D848` is high word 0x16, low 0xB374D848. */
+export function parseLsn(text: string): bigint {
+  const match = /^([0-9A-Fa-f]{1,8})\/([0-9A-Fa-f]{1,8})$/.exec(text.trim());
+  if (!match) throw new Error(`"${text}" is not a log position; expected something like 16/B374D848.`);
+  return (BigInt(`0x${match[1]}`) << 32n) | BigInt(`0x${match[2]}`);
+}
+
+export type LsnBackupChoice =
+  | { ok: true; label: string }
+  | { ok: false; reason: "no_backups" | "no_lsn_info" }
+  | { ok: false; reason: "before_window"; earliest: string };
+
+/**
+ * The backup a restore to `lsn` has to start from.
+ *
+ * pgBackRest picks a backup automatically for a *time* target, but for a log
+ * position it simply takes the newest — and if that backup ended after the
+ * requested position, Postgres refuses to start ("requested recovery stop
+ * point is before consistent recovery point"), several minutes and one
+ * crash-looping container later. So the choice is made here, explicitly: the
+ * newest usable backup that had already finished by `lsn`.
+ */
+export function backupForLsn(stanza: StanzaInfo | undefined, lsn: string): LsnBackupChoice {
+  const target = parseLsn(lsn);
+  const usable = (stanza?.backups ?? []).filter(
+    (b) => stanza?.currentDbId === null || stanza?.currentDbId === undefined || b.dbId === stanza.currentDbId,
+  );
+  if (usable.length === 0) return { ok: false, reason: "no_backups" };
+
+  const withLsn = usable.filter((b): b is typeof b & { lsnStop: string } => b.lsnStop !== null);
+  if (withLsn.length === 0) return { ok: false, reason: "no_lsn_info" };
+
+  const eligible = withLsn
+    .filter((b) => parseLsn(b.lsnStop) <= target)
+    .sort((a, b) => (parseLsn(a.lsnStop) < parseLsn(b.lsnStop) ? 1 : -1));
+  if (eligible.length > 0) return { ok: true, label: eligible[0]!.label };
+
+  const earliest = withLsn
+    .map((b) => b.lsnStop)
+    .sort((a, b) => (parseLsn(a) < parseLsn(b) ? -1 : 1))[0]!;
+  return { ok: false, reason: "before_window", earliest };
 }
 
 /** Resolve the repository a project should use, from global config. */
