@@ -13,23 +13,23 @@
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.5",
+    "@hono/node-server": "^2.1.6",
     "@justpostgres/secrets": "workspace:*",
     "@justpostgres/shared": "workspace:*",
     "better-sqlite3": "^12.4.1",
     "dockerode": "^4.0.9",
-    "drizzle-orm": "^0.44.6",
-    "hono": "^4.9.10",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.17",
     "pg": "^8.16.3",
     "pino": "^9.13.1",
-    "zod": "^4.1.12"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/dockerode": "^3.3.44",
     "@types/node": "^22.18.9",
     "@types/pg": "^8.15.5",
-    "drizzle-kit": "^0.31.5",
+    "drizzle-kit": "^0.31.11",
     "pino-pretty": "^13.1.2",
     "tsup": "^8.5.0",
     "tsx": "^4.20.6",

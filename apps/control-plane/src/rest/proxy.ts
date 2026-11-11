@@ -52,12 +52,40 @@ export function filterRequestHeaders(incoming: Headers): Headers {
  *
  * `location` is deliberately kept: PostgREST returns it on 201-Created inserts,
  * and dropping it would break resource creation for a threat it does not carry.
+ *
+ * The body is the other half. A database function can set its own
+ * `Content-Type` through the same GUC, so a project can answer with
+ * `text/html` — verified against PostgREST 16.2 — and that page would run
+ * script on the admin origin with the admin's session: one call to the API
+ * then reveals every project's credentials. Every proxied response is
+ * therefore a sandboxed document (`CSP: sandbox` gives it an opaque origin and
+ * no script), and `nosniff` stops a browser guessing its way to HTML. CSP does
+ * nothing to a `fetch()` of JSON, so API clients are unaffected.
+ *
+ * Headers that act on the whole origin rather than on this one response are
+ * dropped: `Clear-Site-Data` would sign the admin out, HSTS would pin a
+ * policy the operator never chose, and `Refresh` is a redirect by another name.
+ * Any CSP the project sends is replaced, not merged, so it cannot loosen ours.
  */
+export const PROXY_CSP = "sandbox; default-src 'none'; frame-ancestors 'none'";
+
+const ORIGIN_WIDE_HEADERS = [
+  "set-cookie",
+  "clear-site-data",
+  "strict-transport-security",
+  "refresh",
+  "content-security-policy",
+  "content-security-policy-report-only",
+  "service-worker-allowed",
+];
+
 export function filterResponseHeaders(upstream: Headers): Headers {
   const headers = new Headers(upstream);
   headers.delete("transfer-encoding");
   headers.delete("connection");
-  headers.delete("set-cookie");
+  for (const name of ORIGIN_WIDE_HEADERS) headers.delete(name);
+  headers.set("content-security-policy", PROXY_CSP);
+  headers.set("x-content-type-options", "nosniff");
   return headers;
 }
 

@@ -12,3 +12,10 @@ allowBuilds:
   cpu-features: false
   protobufjs: false
   ssh2: false
+
+# Patched transitive dependencies of dockerode (which pins uuid ^10 and an
+# older @grpc/grpc-js). Neither is on a path this app uses, but both are cheap.
+# uuid 11 still ships CommonJS, which is how dockerode loads it.
+overrides:
+  uuid@<11.1.1: ^11.1.1
+  "@grpc/grpc-js@<1.14.5": ^1.14.5

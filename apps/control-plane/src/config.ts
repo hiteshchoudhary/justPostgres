@@ -147,7 +147,7 @@ const schema = z.object({
   JP_BRANCH_TTL_HOURS: z.coerce.number().int().min(0).default(168),
 
   // --- REST API (M7) -------------------------------------------------------
-  JP_REST_IMAGE: z.string().default("postgrest/postgrest:latest"),
+  JP_REST_IMAGE: z.string().default("postgrest/postgrest:v16.2"),
   /**
    * Wildcard domain for the hostname form, `<ref>.api.example.com`. Without it
    * the path form `/rest/<ref>/` is the only address, which always works.

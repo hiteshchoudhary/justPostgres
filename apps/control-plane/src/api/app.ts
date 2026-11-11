@@ -4,8 +4,10 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { AppContext, HonoEnv } from "./context.js";
 import { HttpError } from "./errors.js";
+import { rejectCrossSiteWrites } from "./origin.js";
 import { requireAuth } from "../auth/middleware.js";
 import { authRoutes } from "./routes/auth.js";
 import { backupRoutes } from "./routes/backups.js";
@@ -55,6 +57,18 @@ export function createApp(ctx: AppContext): Hono<HonoEnv> {
   // because requiring an admin cookie would make it unusable by the
   // applications it exists for.
   if (ctx.config.rest.domainSuffix) {
+    // Its own app, holding nothing but the proxy. Dispatching the rewritten
+    // request back into `app` kept the project's Host header, so this
+    // middleware matched its own output and recursed until the stack ran out —
+    // the hostname form answered every request with a 500. It also means a
+    // project subdomain can only ever reach the proxy: never /api, never the UI.
+    const restOnly = new Hono<HonoEnv>();
+    restOnly.use("*", async (c, next) => {
+      c.set("ctx", ctx);
+      await next();
+    });
+    restOnly.route("/rest", restProxyRoutes());
+
     app.use("*", async (c, next) => {
       const ref = refFromHost(c.req.header("host"), ctx.config.rest.domainSuffix);
       if (!ref) return next();
@@ -65,10 +79,33 @@ export function createApp(ctx: AppContext): Hono<HonoEnv> {
         `${url.origin}/rest/${ref}${url.pathname}${url.search}`,
         c.req.raw,
       );
-      return app.fetch(rewritten, c.env);
+      return restOnly.fetch(rewritten, c.env);
     });
   }
   app.route("/rest", restProxyRoutes());
+
+  // Admin UI and API only — the REST proxy above sets its own, stricter policy
+  // and must not have these layered on. The UI has no reason to be framed, and
+  // being framed is how a click on someone else's page becomes a click here.
+  app.use("*", async (c, next) => {
+    await next();
+    if (c.res.headers.has("content-security-policy")) return;
+    c.header("x-content-type-options", "nosniff");
+    c.header("x-frame-options", "DENY");
+    c.header("content-security-policy", "frame-ancestors 'none'");
+    c.header("referrer-policy", "same-origin");
+  });
+
+  // Every body is bounded before anything parses it. Without this, an
+  // unauthenticated caller could stream an arbitrarily large body at login and
+  // make the schema validator hold all of it in memory. The auth endpoints take
+  // a few short strings; the rest of the API carries SQL at most.
+  const tooLarge = () => {
+    throw new HttpError(413, "payload_too_large", "The request body is too large.");
+  };
+  app.use("/api/auth/*", bodyLimit({ maxSize: 16 * 1024, onError: tooLarge }));
+  app.use("/api/*", bodyLimit({ maxSize: 4 * 1024 * 1024, onError: tooLarge }));
+  app.use("/api/*", rejectCrossSiteWrites());
 
   // Unauthenticated: liveness for the container healthcheck, and the auth
   // endpoints themselves.

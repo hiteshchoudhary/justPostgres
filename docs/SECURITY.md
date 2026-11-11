@@ -216,3 +216,27 @@ has had an external audit; this document is what a careful read of our own code 
   privately, following this document; fixed in v0.1.1.
   <!-- credit: swap in the reporter's name/handle once they confirm it -->
   Thanks to the external researcher who disclosed it responsibly.
+- **Script injection on the admin origin via the REST proxy** (v0.2.1). The same shared origin, the
+  other half of the response: a database function can set `Content-Type: text/html` through
+  `response.headers` (verified on PostgREST 16.2), and the proxy passed that through. Opening such a
+  URL while signed in ran the project's script as the administrator, which could then reveal every
+  project's credentials — so one leaked connection string was enough to take the whole instance.
+  Every proxied response is now a sandboxed document (`Content-Security-Policy: sandbox;
+  default-src 'none'`, plus `nosniff`); a project's own CSP is replaced, and headers that act on the
+  whole origin (`Clear-Site-Data`, HSTS, `Refresh`) are dropped. Verified in a browser: the script
+  is blocked and the page's origin is `null`. Found in an internal review.
+- **Cross-site requests from project subdomains** (v0.2.1). With `JP_REST_DOMAIN_SUFFIX` set, a
+  project serves pages on a sibling subdomain, which `SameSite=Lax` treats as the same site, so the
+  admin cookie rode along on its POSTs. State-changing API requests now have to come from the admin
+  origin (`Sec-Fetch-Site`, falling back to `Origin`); clients that send neither — curl, scripts —
+  are unaffected.
+- **Hardening in the same release.** Request bodies are capped before parsing (16 KB on the auth
+  endpoints, 4 MB elsewhere), so an unauthenticated caller cannot make the validator hold an
+  arbitrarily large body. The admin UI refuses to be framed. PostgREST is pinned to a tested
+  release (`v16.2`) instead of `latest`. Dependencies with advisories — drizzle-orm, hono,
+  @hono/node-server, zod, and dockerode's uuid and @grpc/grpc-js — are on patched versions.
+
+  Upgrading does not change a project whose REST API is already running: its container keeps the
+  PostgREST image it was created with until the API is re-enabled or its keys are rotated, both of
+  which rebuild it on the pinned image. The proxy fixes need no such step: they are in the control
+  plane and apply the moment it is updated.
