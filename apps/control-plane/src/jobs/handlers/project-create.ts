@@ -266,6 +266,15 @@ async function ensureContainer(
  * on a slow disk that is tens of seconds. Reporting the project as running
  * before `pg_isready` succeeds would hand the user a connection string that
  * refuses connections.
+ *
+ * The check goes over TCP, not the Unix socket. On first boot the official
+ * image's entrypoint runs a temporary server for initialisation with
+ * `listen_addresses=''` — socket only — then stops it and starts the real one.
+ * A socket check passes against that temporary server, and whatever runs next
+ * lands in the gap between the two: stanza-create failed with "unable to find
+ * primary cluster" and no socket, on a slow VPS, and the project was marked
+ * failed. The temporary server never listens on TCP, so a TCP answer can only
+ * come from the real one.
  */
 export async function waitForPostgres(
   deps: JobDeps,
@@ -282,6 +291,8 @@ export async function waitForPostgres(
     try {
       const result = await deps.docker.exec(containerId, [
         "pg_isready",
+        "-h",
+        "127.0.0.1",
         "-U",
         DEFAULT_ROLE,
         "-d",

@@ -657,7 +657,10 @@ function describeMissing(before: Manifest, after: Manifest): string[] {
   return missing;
 }
 
-/** Same wait the provisioning path uses: a started container is not a ready database. */
+/**
+ * Same wait the provisioning path uses: a started container is not a ready
+ * database. Over TCP for the same reason — see project-create's waitForPostgres.
+ */
 async function waitForPostgres(
   deps: JobDeps,
   containerId: string,
@@ -672,6 +675,8 @@ async function waitForPostgres(
     try {
       const result = await deps.docker.exec(containerId, [
         "pg_isready",
+        "-h",
+        "127.0.0.1",
         "-U",
         DEFAULT_ROLE,
         "-d",

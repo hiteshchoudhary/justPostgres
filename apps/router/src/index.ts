@@ -6,7 +6,7 @@ import { RouteStore } from "./routes.js";
 import { SessionServer } from "./session.js";
 import { TransactionServer } from "./transaction.js";
 
-const VERSION = process.env.JP_VERSION ?? "0.0.0-dev";
+const VERSION = process.env.JP_VERSION || "0.0.0-dev";
 
 async function main(): Promise<void> {
   const config = loadConfig();

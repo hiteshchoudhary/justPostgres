@@ -51,6 +51,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        if: startsWith(github.ref, 'refs/tags/')
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -66,6 +70,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
+          build-args: JP_VERSION=${{ steps.version.outputs.value || inputs.version }}
           outputs: type=image,name=${{ env.NAMESPACE }}/justpostgres-${{ matrix.name }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Save the digest

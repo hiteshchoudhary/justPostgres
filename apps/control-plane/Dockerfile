@@ -51,7 +51,10 @@ RUN pnpm build
 
 # --- runtime ----------------------------------------------------------------
 FROM base AS runtime
+# Stamped by the release workflow, so the UI footer and logs say what is running.
+ARG JP_VERSION=0.0.0-dev
 ENV NODE_ENV=production \
+    JP_VERSION=${JP_VERSION} \
     JP_DATA_DIR=/data \
     JP_UI_DIR=/app/apps/control-plane/public \
     JP_SERVE_UI=true \

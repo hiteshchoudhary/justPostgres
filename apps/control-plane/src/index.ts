@@ -27,7 +27,7 @@ import { resetAdmin } from "./admin/reset-admin.js";
 import { MetricsService } from "./metrics/service.js";
 import { ObjectStorageService } from "./backups/object-storage.js";
 
-const VERSION = process.env.JP_VERSION ?? "0.0.0-dev";
+const VERSION = process.env.JP_VERSION || "0.0.0-dev";
 
 /** Migrations sit next to the build output in both dev (src/..) and the image (dist/..). */
 function resolveMigrationsDir(): string {
