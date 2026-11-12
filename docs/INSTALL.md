@@ -55,8 +55,8 @@ openssl rand -base64 32
 It encrypts every project's database password, and there is no recovery. Save it in a password
 manager before you deploy.
 
-**`JP_PUBLIC_HOST`** is your server's IP or hostname. It goes into the connection strings you hand to
-applications, so left as `localhost` every string you copy works on the server and nowhere else.
+Connection strings use whatever address you open the UI on: browse to the IP and you copy an IP,
+browse to a domain and you copy the domain. Set **`JP_PUBLIC_HOST`** only to pin a different name.
 
 ### 3. Deploy
 
@@ -65,13 +65,15 @@ minutes.
 
 ### 4. Claim it
 
-There is no default account. Find the one-time setup token in the stack's logs:
+There is no default account. Find the one-time setup token in the control plane's logs. On the
+server's shell (not inside a container — the panel's container terminal has no `docker`), this works
+from any directory:
 
 ```
-docker compose logs control-plane | grep jp_setup
+docker logs $(docker ps -qf name=control-plane) 2>&1 | grep jp_setup
 ```
 
-Most panels have a log viewer — search it for `jp_setup`. Then open `http://YOUR_SERVER_IP:8080` and
+Most panels also have a log viewer — search it for `jp_setup`. Then open `http://YOUR_SERVER_IP:8080` and
 create your account with that token.
 
 ### 5. Firewall the project ports
@@ -189,14 +191,11 @@ Write it down — the next step needs it, and connection strings are built from 
 
 ### 3. Create `.env`
 
-Replace `203.0.113.10` with the IP you just got:
-
 ```bash
 cat > .env <<'EOF'
 JP_MASTER_KEY=REPLACE_ME
 JP_BIND_ADDR=0.0.0.0
 JP_HTTP_PORT=8080
-JP_PUBLIC_HOST=203.0.113.10
 EOF
 
 # generate the key and drop it in
@@ -212,7 +211,6 @@ What each one does:
 | `JP_MASTER_KEY` | Encrypts every project's password. **No recovery if lost** — copy it somewhere safe. |
 | `JP_BIND_ADDR=0.0.0.0` | Makes the UI reachable from outside the server. The default is loopback only. |
 | `JP_HTTP_PORT=8080` | The port you will open in a browser. Any free port works. |
-| `JP_PUBLIC_HOST` | **The IP goes here.** Leave it out and every connection string says `localhost`, which works on the server and nowhere else. |
 
 ### 4. Build the images and start
 
@@ -263,8 +261,8 @@ answers on one port without per-project DNS.
 ### Moving to a domain later
 
 Nothing is lost. Point DNS at the server, then follow [option C](#c-run-it-on-a-vps-with-a-domain-and-https)
-— keep the same `.env` and the same `JP_MASTER_KEY`, add `JP_DOMAIN`, change `JP_PUBLIC_HOST` to the
-hostname, and remove `JP_BIND_ADDR`. Your projects and data carry over.
+— keep the same `.env` and the same `JP_MASTER_KEY`, add `JP_DOMAIN`, remove `JP_PUBLIC_HOST` if you
+had set it, and remove `JP_BIND_ADDR`. Your projects and data carry over.
 
 ---
 
@@ -298,13 +296,12 @@ cd justpostgres
 
 ### 3. Create `.env`
 
-Replace `db.example.com` with your hostname in both places:
+Replace `db.example.com` with your hostname:
 
 ```bash
 cat > .env <<'EOF'
 JP_MASTER_KEY=REPLACE_ME
 JP_DOMAIN=db.example.com
-JP_PUBLIC_HOST=db.example.com
 EOF
 
 sed -i "s|JP_MASTER_KEY=REPLACE_ME|JP_MASTER_KEY=$(openssl rand -base64 32)|" .env
@@ -316,7 +313,6 @@ cat .env
 |---|---|
 | `JP_MASTER_KEY` | Encrypts every project's password. **No recovery if lost.** |
 | `JP_DOMAIN` | **The hostname Caddy gets a certificate for.** This is the one the browser uses. |
-| `JP_PUBLIC_HOST` | The hostname put into connection strings. Usually the same. |
 
 There is no `JP_BIND_ADDR` here on purpose. The control plane stays on loopback and Caddy is the only
 way in.
@@ -513,8 +509,9 @@ command, not just `up`. Create it first.
 **A project fails with "pull access denied".** You have not built the image for that Postgres major.
 Run `images/postgres/build.sh`.
 
-**Connection strings say `localhost` instead of your IP or domain.** `JP_PUBLIC_HOST` is not set. Add
-it to `.env` and `docker compose up -d`. Existing projects pick it up straight away.
+**Connection strings show the wrong host.** They use the address you opened the UI on, so open it by
+the IP or domain your applications should use. If those differ — say the UI is behind a VPN name —
+set `JP_PUBLIC_HOST` in `.env` and `docker compose up -d`. Existing projects pick it up straight away.
 
 **A new project refuses connections: "still being provisioned".** The router refreshes its routing
 table every 5 seconds and reads the metadata store read-only, so it lags a few seconds behind a

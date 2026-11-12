@@ -4,6 +4,7 @@ import { PG_MAJOR_VERSIONS, PROJECT_ACTIONS } from "@justpostgres/shared";
 import { clientIp } from "../../auth/middleware.js";
 import { audit, listAudit } from "../../lib/audit.js";
 import { NoPortsAvailableError } from "../../projects/ports.js";
+import { requestHostname } from "../../projects/naming.js";
 import { ProjectError } from "../../projects/service.js";
 import type { HonoEnv } from "../context.js";
 import { HttpError } from "../errors.js";
@@ -83,7 +84,13 @@ export function projectRoutes() {
     const ctx = c.get("ctx");
     const reveal = new URL(c.req.url).searchParams.get("reveal") === "true";
     try {
-      const connection = ctx.projects.connection(c.req.param("id"), { reveal });
+      // Connection strings name the host the admin reached this UI on, unless
+      // JP_PUBLIC_HOST pins one: browse by IP, copy an IP; by domain, a domain.
+      const requestHost = requestHostname({
+        host: c.req.header("host"),
+        forwardedHost: c.req.header("x-forwarded-host"),
+      });
+      const connection = ctx.projects.connection(c.req.param("id"), { reveal, requestHost });
       if (reveal) {
         audit(ctx.db.db, {
           actor: c.get("admin")!.email,

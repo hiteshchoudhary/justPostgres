@@ -94,8 +94,13 @@ export function buildEndpoints(opts: {
   database: string;
   containerPort: number | null;
   reveal: boolean;
+  /** Host the UI was reached on; used wherever no host is pinned in config. */
+  requestHost?: string | null;
 }): ConnectionEndpoint[] {
   const { config, ref, role, password, database, containerPort, reveal } = opts;
+  const fallback = opts.requestHost ?? "localhost";
+  const routerHost = config.router.host ?? fallback;
+  const publicHost = config.publicHost ?? fallback;
 
   const make = (
     kind: ConnectionEndpoint["kind"],
@@ -134,7 +139,7 @@ export function buildEndpoints(opts: {
         "direct",
         "Direct",
         "Session mode. Use for migrations, pg_dump, LISTEN/NOTIFY, and long-lived application connections.",
-        config.router.host,
+        routerHost,
         config.router.sessionPort,
         routedUser,
       ),
@@ -145,7 +150,7 @@ export function buildEndpoints(opts: {
         "pooled",
         "Pooled",
         "Transaction mode. Use for serverless and anything that opens many short-lived connections.",
-        config.router.host,
+        routerHost,
         config.router.poolPort,
         routedUser,
         "Session state does not survive a transaction: SET, LISTEN, session advisory locks, WITH HOLD cursors and named prepared statements will not work. Use the direct string for those.",
@@ -161,7 +166,7 @@ export function buildEndpoints(opts: {
         config.router.enabled
           ? "Bypasses the router entirely and talks to the container. Useful for debugging the router itself."
           : "Session mode, straight to the container. The router is not deployed on this instance.",
-        config.publicHost,
+        publicHost,
         containerPort,
         role,
       ),
@@ -169,4 +174,35 @@ export function buildEndpoints(opts: {
   }
 
   return endpoints;
+}
+
+/**
+ * The host a browser used to reach the UI, fit to put in a connection string.
+ *
+ * A proxy's X-Forwarded-Host wins over Host, because behind one the Host header
+ * is the proxy's upstream address. The port is dropped — it is the UI's port,
+ * not Postgres's. Anything that is not a plain hostname, IPv4 or bracketed
+ * IPv6 address is refused rather than spliced into a URL.
+ *
+ * Trusting a client-supplied header is fine here: the answer goes back only to
+ * the admin who sent it, so all a forged header can change is what that admin
+ * sees.
+ */
+export function requestHostname(headers: {
+  host?: string | null;
+  forwardedHost?: string | null;
+}): string | null {
+  const forwarded = headers.forwardedHost?.split(",")[0]?.trim();
+  const raw = (forwarded || headers.host || "").trim().toLowerCase();
+  if (!raw) return null;
+
+  if (raw.startsWith("[")) {
+    const end = raw.indexOf("]");
+    if (end === -1) return null;
+    const v6 = raw.slice(0, end + 1);
+    return /^\[[0-9a-f:.]+\]$/.test(v6) ? v6 : null;
+  }
+
+  const name = raw.replace(/:\d+$/, "");
+  return /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(name) ? name : null;
 }

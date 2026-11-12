@@ -91,7 +91,10 @@ export default function AuthPage({ setupRequired }: { setupRequired: boolean }) 
               />
               <span className="mt-1.5 block text-xs text-content-subtle">
                 Printed to the control plane's log when it started. Find it with{" "}
-                <span className="mono">docker compose logs control-plane | grep jp_setup</span>. It
+                <span className="mono">
+                  docker logs $(docker ps -qf name=control-plane) 2&gt;&amp;1 | grep jp_setup
+                </span>{" "}
+                on the server. It
                 proves you are the operator rather than the first stranger to find this page.
               </span>
             </label>

@@ -253,7 +253,10 @@ export class ProjectService {
    * and detail views never move it over the wire. The masked URL is always
    * safe to render.
    */
-  connection(id: string, opts: { reveal?: boolean } = {}): ProjectConnection {
+  connection(
+    id: string,
+    opts: { reveal?: boolean; requestHost?: string | null } = {},
+  ): ProjectConnection {
     const row = this.getRow(id);
 
     const credential = this.db
@@ -271,6 +274,7 @@ export class ProjectService {
       database: credential.database,
       containerPort: row.hostPort,
       reveal: opts.reveal ?? false,
+      requestHost: opts.requestHost ?? null,
     });
 
     if (endpoints.length === 0) {

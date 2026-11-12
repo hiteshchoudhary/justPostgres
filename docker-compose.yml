@@ -24,10 +24,10 @@ services:
       #   docker compose logs control-plane | grep jp_setup
       JP_SETUP_TOKEN: ${JP_SETUP_TOKEN:-}
       JP_DOCKER_HOST: tcp://docker-socket-proxy:2375
-      JP_PUBLIC_HOST: ${JP_PUBLIC_HOST:-localhost}
+      JP_PUBLIC_HOST: ${JP_PUBLIC_HOST:-}
       # Tells the UI to hand out routed connection strings.
       JP_ROUTER_ENABLED: "true"
-      JP_ROUTER_PUBLIC_HOST: ${JP_ROUTER_PUBLIC_HOST:-${JP_PUBLIC_HOST:-localhost}}
+      JP_ROUTER_PUBLIC_HOST: ${JP_ROUTER_PUBLIC_HOST:-}
       JP_ROUTER_SESSION_PORT: ${JP_ROUTER_SESSION_PORT:-5432}
       JP_ROUTER_POOL_PORT: ${JP_ROUTER_POOL_PORT:-6543}
       # The data browser connects to project containers on the host.

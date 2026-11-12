@@ -40,8 +40,13 @@ const schema = z.object({
   /**
    * Hostname users connect their clients to. Not the same as JP_HOST, which is
    * only the interface the control plane's HTTP server binds.
+   *
+   * Optional: left unset, connection strings use whatever host the admin
+   * opened the UI on — the IP if they browsed to the IP, the domain if they
+   * browsed to the domain. Set it to pin one, e.g. when the UI sits behind a
+   * different name than the databases.
    */
-  JP_PUBLIC_HOST: z.string().default("localhost"),
+  JP_PUBLIC_HOST: z.string().optional(),
 
   /** Host ports available to publish project containers on (routing mode 3). */
   /**
@@ -218,8 +223,9 @@ export interface Config {
   masterKey: Buffer;
   masterKeyIsEphemeral: boolean;
   docker: { host?: string; socketPath: string };
-  publicHost: string;
-  router: { enabled: boolean; host: string; sessionPort: number; poolPort: number };
+  /** Null means "the host the UI was reached on" — see resolveConnectHost. */
+  publicHost: string | null;
+  router: { enabled: boolean; host: string | null; sessionPort: number; poolPort: number };
   portRange: { start: number; end: number };
   projects: {
     imageTemplate: string;
@@ -361,10 +367,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     masterKey: key,
     masterKeyIsEphemeral: ephemeral,
     docker: { host: c.JP_DOCKER_HOST, socketPath: resolveDockerSocket(env, c.JP_DOCKER_SOCKET) },
-    publicHost: c.JP_PUBLIC_HOST,
+    publicHost: pinnedHost(c.JP_PUBLIC_HOST),
     router: {
       enabled: c.JP_ROUTER_ENABLED ?? false,
-      host: c.JP_ROUTER_PUBLIC_HOST ?? c.JP_PUBLIC_HOST,
+      host: pinnedHost(c.JP_ROUTER_PUBLIC_HOST) ?? pinnedHost(c.JP_PUBLIC_HOST),
       sessionPort: c.JP_ROUTER_SESSION_PORT,
       poolPort: c.JP_ROUTER_POOL_PORT,
     },
@@ -436,4 +442,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     ui: { serve: c.JP_SERVE_UI ?? isProduction, dir: resolve(c.JP_UI_DIR) },
   };
+}
+
+/**
+ * A configured connection host, or null to follow the request.
+ *
+ * `localhost` counts as unset. It was the shipped default — every compose file
+ * written before the host was derived from the request still passes it — and
+ * a connection string saying localhost is only right for someone sitting at
+ * the server, who reaches the UI on localhost anyway and so gets it either way.
+ */
+export function pinnedHost(value: string | undefined): string | null {
+  const v = value?.trim();
+  if (!v || v === "localhost") return null;
+  return v;
 }

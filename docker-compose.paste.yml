@@ -4,9 +4,9 @@
 # Hostinger, Coolify, Dokploy, Portainer, or plain SSH.
 #
 # ────────────────────────────────────────────────────────────────────────────
-#  BEFORE YOU DEPLOY, CHANGE TWO LINES
+#  BEFORE YOU DEPLOY, CHANGE ONE LINE
 #
-#  1. JP_MASTER_KEY — replace CHANGE_ME_RUN_openssl_rand_base64_32
+#  JP_MASTER_KEY — replace CHANGE_ME_RUN_openssl_rand_base64_32
 #
 #        openssl rand -base64 32
 #
@@ -14,11 +14,9 @@
 #     lose it and your databases keep running with nothing able to authenticate
 #     to them. Save it in a password manager before you deploy, not after.
 #
-#  2. JP_PUBLIC_HOST — your server's IP or hostname.
-#
-#     It is what goes into the connection strings you hand to applications.
-#     Left as localhost, every string you copy works on the server and nowhere
-#     else.
+#  Connection strings use whatever address you open the UI on — the IP if you
+#  browse to the IP, the domain if you browse to the domain. To pin one
+#  instead, uncomment JP_PUBLIC_HOST below.
 #
 #  Everything else has a working default.
 # ────────────────────────────────────────────────────────────────────────────
@@ -28,7 +26,7 @@
 #  There is no default account. The first boot prints a one-time setup token;
 #  find it in this stack's control-plane logs:
 #
-#      docker compose logs control-plane | grep jp_setup
+#      docker logs $(docker ps -qf name=control-plane) 2>&1 | grep jp_setup
 #
 #  Open http://YOUR_SERVER_IP:8080 and claim it with that token.
 #
@@ -45,9 +43,9 @@ services:
     depends_on:
       - docker-socket-proxy
     environment:
-      # ---- CHANGE THESE TWO ---------------------------------------------
+      # ---- CHANGE THIS --------------------------------------------------
       JP_MASTER_KEY: CHANGE_ME_RUN_openssl_rand_base64_32
-      JP_PUBLIC_HOST: localhost
+      # JP_PUBLIC_HOST: db.example.com
       # -------------------------------------------------------------------
 
       JP_PORT: 3000
@@ -62,7 +60,6 @@ services:
       JP_BIND_ADDR: 0.0.0.0
 
       JP_ROUTER_ENABLED: "true"
-      JP_ROUTER_PUBLIC_HOST: localhost
       JP_PROJECT_CONNECT_HOST: host.docker.internal
       JP_PORT_RANGE_START: 55000
       JP_PORT_RANGE_END: 55999
