@@ -1,9 +1,24 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 import type { PolicyTemplate, TableSecurity } from "@justpostgres/shared";
-import { Badge, Button, Card, CopyButton, Input, Modal, PageHeader, Select } from "../components/ui.js";
-import { api, ApiError } from "../lib/api.js";
+import { api, ApiError } from "@/lib/api";
+import { InPageHeader } from "@/components/InPageHeader";
+import { CopyButton } from "@/components/CopyButton";
+import { ToneBadge } from "@/components/ToneBadge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE"] as const;
 
@@ -43,93 +58,119 @@ function ExposeModal({
   });
 
   return (
-    <Modal
-      title={`Expose ${table.table} through the API`}
-      description="Granting access and enabling row-level security happen together, in one transaction. There is no step where the table is reachable but unprotected."
-      onClose={onClose}
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
     >
-      <div className="space-y-4">
-        <div>
-          <span className="mb-1.5 block text-xs font-medium text-content-muted">Who can see which rows</span>
-          <div className="space-y-2">
-            {templates.map((t) => (
-              <label
-                key={t.id}
-                className={`block cursor-pointer rounded-md border px-3 py-2 ${
-                  templateId === t.id ? "border-accent bg-surface-sunken" : "border-border"
-                }`}
-              >
-                <span className="flex items-center gap-2">
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Expose {table.table} through the API</DialogTitle>
+          <DialogDescription>
+            Granting access and enabling row-level security happen together, in one transaction. There is no step where the table is reachable but unprotected.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <span className="mb-1.5 block text-xs font-medium text-content-muted">Who can see which rows</span>
+            <div className="space-y-2">
+              {templates.map((t) => (
+                <label
+                  key={t.id}
+                  className={`block cursor-pointer rounded-md border px-3 py-2 ${
+                    templateId === t.id ? "border-accent bg-surface-sunken" : "border-border"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      checked={templateId === t.id}
+                      onChange={() => setTemplateId(t.id)}
+                    />
+                    <span className="text-sm font-medium">{t.title}</span>
+                  </span>
+                  <span className="mt-1 block pl-6 text-xs text-content-muted">{t.description}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {template?.needsColumn ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="expose-column" className="text-xs font-medium text-content-muted">
+                {template.columnLabel ?? "Column"}
+              </Label>
+              <Input
+                id="expose-column"
+                value={column}
+                onChange={(e) => setColumn(e.target.value)}
+                placeholder="owner_id"
+              />
+            </div>
+          ) : null}
+
+          {templateId === "tenant" ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="expose-claim" className="text-xs font-medium text-content-muted">
+                Claim name in the token
+              </Label>
+              <Input
+                id="expose-claim"
+                value={claim}
+                onChange={(e) => setClaim(e.target.value)}
+                aria-describedby="expose-claim-hint"
+              />
+              <p id="expose-claim-hint" className="text-xs text-content-subtle">
+                Whatever your identity provider puts in the JWT to identify the tenant.
+              </p>
+            </div>
+          ) : null}
+
+          <div>
+            <span className="mb-1.5 block text-xs font-medium text-content-muted">Allowed operations</span>
+            <div className="flex flex-wrap gap-2">
+              {PRIVILEGES.map((p) => (
+                <label key={p} className="flex items-center gap-1.5 text-xs">
                   <input
-                    type="radio"
-                    checked={templateId === t.id}
-                    onChange={() => setTemplateId(t.id)}
+                    type="checkbox"
+                    checked={privileges.includes(p)}
+                    onChange={(e) =>
+                      setPrivileges((current) =>
+                        e.target.checked ? [...current, p] : current.filter((v) => v !== p),
+                      )
+                    }
                   />
-                  <span className="text-sm font-medium">{t.title}</span>
-                </span>
-                <span className="mt-1 block pl-6 text-xs text-content-muted">{t.description}</span>
-              </label>
-            ))}
+                  <span className="mono">{p}</span>
+                </label>
+              ))}
+            </div>
           </div>
+
+          {expose.error ? (
+            <p className="rounded-md bg-danger/10 px-3 py-2 text-xs text-danger">
+              {expose.error instanceof ApiError ? expose.error.message : "Could not expose the table."}
+            </p>
+          ) : null}
         </div>
-
-        {template?.needsColumn ? (
-          <Input
-            label={template.columnLabel ?? "Column"}
-            value={column}
-            onChange={(e) => setColumn(e.target.value)}
-            placeholder="owner_id"
-          />
-        ) : null}
-
-        {templateId === "tenant" ? (
-          <Input
-            label="Claim name in the token"
-            value={claim}
-            onChange={(e) => setClaim(e.target.value)}
-            hint="Whatever your identity provider puts in the JWT to identify the tenant."
-          />
-        ) : null}
-
-        <div>
-          <span className="mb-1.5 block text-xs font-medium text-content-muted">Allowed operations</span>
-          <div className="flex flex-wrap gap-2">
-            {PRIVILEGES.map((p) => (
-              <label key={p} className="flex items-center gap-1.5 text-xs">
-                <input
-                  type="checkbox"
-                  checked={privileges.includes(p)}
-                  onChange={(e) =>
-                    setPrivileges((current) =>
-                      e.target.checked ? [...current, p] : current.filter((v) => v !== p),
-                    )
-                  }
-                />
-                <span className="mono">{p}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {expose.error ? (
-          <p className="rounded-md bg-danger/10 px-3 py-2 text-xs text-danger">
-            {expose.error instanceof ApiError ? expose.error.message : "Could not expose the table."}
-          </p>
-        ) : null}
-
-        <div className="flex justify-end gap-2 pt-1">
+        <DialogFooter>
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
           <Button
-            loading={expose.isPending} disabled={privileges.length === 0 || (template?.needsColumn && !column)}
+            disabled={
+              privileges.length === 0 ||
+              (template?.needsColumn && !column) ||
+              expose.isPending
+            }
             onClick={() => expose.mutate()}
           >
+            {expose.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
             {expose.isPending ? "Applying…" : "Expose"}
           </Button>
-        </div>
-      </div>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -146,7 +187,7 @@ function KeyRow({ label, value, hint }: { label: string; value: string; hint: st
           <Button variant="secondary" onClick={() => setShown((v) => !v)}>
             {shown ? "Hide" : "Show"}
           </Button>
-          <CopyButton value={value} />
+          <CopyButton label="Copy" value={value} />
         </div>
       </div>
       <pre className="mono mt-2 overflow-x-auto rounded-md bg-surface-sunken px-3 py-2 text-xs">
@@ -202,21 +243,24 @@ export default function ApiPage() {
 
   return (
     <>
-      <PageHeader
+      <InPageHeader
         title="REST API"
         description="An HTTP API over your schema, generated by PostgREST. Off by default — turning it on makes a private database reachable, and what keeps it safe is row-level security."
         actions={
           s?.enabled ? (
             <>
-              <Button variant="secondary" loading={rotate.isPending} onClick={() => rotate.mutate()}>
+              <Button variant="secondary" disabled={rotate.isPending} onClick={() => rotate.mutate()}>
+                {rotate.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
                 Rotate keys
               </Button>
-              <Button variant="danger" loading={disable.isPending} onClick={() => disable.mutate()}>
+              <Button variant="destructive" disabled={disable.isPending} onClick={() => disable.mutate()}>
+                {disable.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
                 Disable
               </Button>
             </>
           ) : (
-            <Button loading={enable.isPending} onClick={() => enable.mutate()}>
+            <Button disabled={enable.isPending} onClick={() => enable.mutate()}>
+              {enable.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
               {enable.isPending ? "Enabling…" : "Enable the API"}
             </Button>
           )
@@ -224,16 +268,16 @@ export default function ApiPage() {
       />
 
       {error ? (
-        <Card className="mb-4 border-danger/40 px-4 py-2.5 text-xs text-danger">{error}</Card>
+        <Card className="mb-4 gap-0 py-0 border-danger/40 px-4 py-2.5 text-xs text-danger">{error}</Card>
       ) : null}
       {s?.lastError ? (
-        <Card className="mb-4 border-danger/40 px-4 py-2.5 text-xs text-danger">{s.lastError}</Card>
+        <Card className="mb-4 gap-0 py-0 border-danger/40 px-4 py-2.5 text-xs text-danger">{s.lastError}</Card>
       ) : null}
 
       {dangerous.length > 0 ? (
-        <Card className="mb-4 border-danger p-4">
+        <Card className="mb-4 gap-0 py-0 border-danger p-4">
           <div className="mb-1 flex items-center gap-2">
-            <Badge tone="danger">reachable with no row-level security</Badge>
+            <ToneBadge tone="danger">reachable with no row-level security</ToneBadge>
           </div>
           <p className="text-xs text-content-muted">
             {dangerous.map((t) => t.table).join(", ")} — anyone holding the anon key can read every row
@@ -245,7 +289,7 @@ export default function ApiPage() {
       ) : null}
 
       {!s?.enabled ? (
-        <Card className="px-6 py-12 text-center">
+        <Card className="gap-0 py-0 px-6 py-12 text-center">
           <p className="text-sm font-medium">The API is off</p>
           <p className="mx-auto mt-2 max-w-lg text-sm text-content-muted">
             When you turn it on, no table is reachable until you expose it. That is deliberately the
@@ -255,7 +299,7 @@ export default function ApiPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          <Card>
+          <Card className="gap-0 py-0">
             <div className="border-b border-border px-4 py-2.5 text-xs font-medium uppercase tracking-wide text-content-subtle">
               Endpoint
             </div>
@@ -277,7 +321,7 @@ export default function ApiPage() {
           </Card>
 
           {s.keys ? (
-            <Card>
+            <Card className="gap-0 py-0">
               <div className="border-b border-border px-4 py-2.5 text-xs font-medium uppercase tracking-wide text-content-subtle">
                 Keys
               </div>
@@ -300,7 +344,7 @@ export default function ApiPage() {
             </Card>
           ) : null}
 
-          <Card>
+          <Card className="gap-0 py-0">
             <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
               <span className="text-xs font-medium uppercase tracking-wide text-content-subtle">
                 Tables
@@ -321,13 +365,13 @@ export default function ApiPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="mono text-sm font-medium">{t.table}</span>
                       {t.anonPrivileges.length > 0 ? (
-                        <Badge tone={t.exposedWithoutRls ? "danger" : "ok"}>
+                        <ToneBadge tone={t.exposedWithoutRls ? "danger" : "ok"}>
                           {t.anonPrivileges.join(", ")}
-                        </Badge>
+                        </ToneBadge>
                       ) : (
-                        <Badge tone="neutral">not exposed</Badge>
+                        <ToneBadge tone="neutral">not exposed</ToneBadge>
                       )}
-                      {t.rlsEnabled ? <Badge tone="ok">RLS on</Badge> : <Badge tone="warn">RLS off</Badge>}
+                      {t.rlsEnabled ? <ToneBadge tone="ok">RLS on</ToneBadge> : <ToneBadge tone="warn">RLS off</ToneBadge>}
                     </div>
                     {t.policies.length > 0 ? (
                       <ul className="mt-1.5 space-y-1">
@@ -349,7 +393,7 @@ export default function ApiPage() {
                       {t.rlsEnabled ? "Disable RLS" : "Enable RLS"}
                     </Button>
                     {t.anonPrivileges.length > 0 ? (
-                      <Button variant="danger" onClick={() => unexpose.mutate(t)}>
+                      <Button variant="destructive" onClick={() => unexpose.mutate(t)}>
                         Unexpose
                       </Button>
                     ) : (

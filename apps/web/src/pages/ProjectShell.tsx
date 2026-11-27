@@ -1,9 +1,11 @@
-import { Outlet, useParams } from "react-router-dom";
+import { Link, Outlet, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import ProjectTabs from "../components/ProjectTabs.js";
-import { Badge, Card, Loading, projectStateTone } from "../components/ui.js";
 import { api, ApiError } from "../lib/api.js";
-import { Link } from "react-router-dom";
+import { Loading } from "@/components/Loading";
+import { StateBadge } from "@/components/StateBadge.js";
+import { Card } from "@/components/ui/card";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar.js";
 
 /**
  * Shared chrome for a project: identity, state and the tab bar, so switching
@@ -24,7 +26,7 @@ export default function ProjectShell() {
   }
   if (error || !data) {
     return (
-      <Card className="px-6 py-14 text-center text-sm text-danger">
+      <Card className="gap-0 px-6 py-14 text-center text-sm text-destructive">
         {error instanceof ApiError ? error.message : "Could not load this project."}
       </Card>
     );
@@ -33,23 +35,29 @@ export default function ProjectShell() {
   const { project } = data;
 
   return (
-    <>
-      <div className="mb-2">
-        <Link to="/projects" className="text-xs text-content-muted hover:text-content">
-          ← Projects
-        </Link>
+    <SidebarProvider>
+      <ProjectTabs projectName={project.name} />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="sticky top-14 z-30 -mx-8 mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-overlay/90 px-8 py-2 backdrop-blur-md">
+          <SidebarTrigger className="-ml-1" />
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <Link
+              to="/projects"
+              className="shrink-0 text-xs text-muted-foreground hover:text-content"
+            >
+              ← Projects
+            </Link>
+            <span className="truncate text-sm font-semibold">{project.name}</span>
+            <StateBadge state={project.state} />
+            <span className="mono truncate text-xs text-muted-foreground">
+              {project.ref} · Postgres {project.pgMajor}
+            </span>
+          </div>
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <Outlet context={{ project }} />
+        </div>
       </div>
-
-      <div className="mb-3 flex flex-wrap items-baseline gap-3">
-        <h1 className="text-xl font-semibold tracking-tight">{project.name}</h1>
-        <Badge tone={projectStateTone(project.state)}>{project.state}</Badge>
-        <span className="mono text-xs text-content-subtle">
-          {project.ref} · Postgres {project.pgMajor}
-        </span>
-      </div>
-
-      <ProjectTabs />
-      <Outlet context={{ project }} />
-    </>
+    </SidebarProvider>
   );
 }

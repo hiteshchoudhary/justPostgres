@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { RelationInfo } from "@justpostgres/shared";
-import { api } from "../lib/api.js";
-import { formatBytes } from "./ui.js";
+
+import { api } from "@/lib/api";
+import { formatBytes } from "@/lib/format";
 
 const KIND_LABEL: Record<RelationInfo["kind"], string> = {
   table: "table",

@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
 import type { BrowseResult, CellValue } from "@justpostgres/shared";
 
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
 export interface CellEdit {
   rowIndex: number;
   column: string;
@@ -59,7 +69,7 @@ function EditableCell({
 
   return (
     <div className="flex items-center gap-1">
-      <input
+      <Input
         autoFocus
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -71,7 +81,7 @@ function EditableCell({
             setEditing(false);
           }
         }}
-        className="mono w-full rounded border border-accent bg-surface px-1 py-0.5 text-xs outline-none"
+        className="mono h-auto w-full rounded border border-accent bg-surface px-1 py-0.5 text-xs outline-none md:text-xs"
       />
       <button
         // Typing nothing means an empty string; setting NULL has to be explicit.
@@ -104,73 +114,71 @@ export default function DataGrid({
   const editable = result.editable && onEdit !== undefined;
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-xs">
-        <thead className="sticky top-0 bg-surface-raised">
-          <tr className="border-b border-border text-left">
-            {onDeleteRow ? <th className="w-8 px-2 py-2" /> : null}
-            {result.columns.map((column) => (
-              <th
-                key={column.name}
-                onClick={() => onSort?.(column.name)}
-                className={`px-3 py-2 font-medium whitespace-nowrap ${onSort ? "cursor-pointer hover:text-accent" : ""}`}
-              >
-                <span className="mono">{column.name}</span>
-                {column.isPrimaryKey ? (
-                  <span className="ml-1 text-[10px] text-accent" title="Primary key">
-                    PK
-                  </span>
-                ) : null}
-                {sort?.column === column.name ? (
-                  <span className="ml-1 text-accent">{sort.direction === "asc" ? "↑" : "↓"}</span>
-                ) : null}
-                <span className="mono ml-2 font-normal text-[10px] text-content-subtle">
-                  {column.type}
+    <Table className="w-full border-collapse text-xs">
+      <TableHeader className="sticky top-0 bg-surface-raised">
+        <TableRow className="border-b border-border text-left hover:bg-transparent">
+          {onDeleteRow ? <TableHead className="h-auto w-8 px-2 py-2" /> : null}
+          {result.columns.map((column) => (
+            <TableHead
+              key={column.name}
+              onClick={() => onSort?.(column.name)}
+              className={`h-auto px-3 py-2 font-medium whitespace-nowrap ${onSort ? "cursor-pointer hover:text-accent" : ""}`}
+            >
+              <span className="mono">{column.name}</span>
+              {column.isPrimaryKey ? (
+                <span className="ml-1 text-[10px] text-accent" title="Primary key">
+                  PK
                 </span>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {result.rows.length === 0 ? (
-            <tr>
-              <td
-                colSpan={result.columns.length + (onDeleteRow ? 1 : 0)}
-                className="px-3 py-10 text-center text-content-muted"
-              >
-                No rows.
-              </td>
-            </tr>
-          ) : (
-            result.rows.map((row, rowIndex) => (
-              <tr key={rowIndex} className="border-b border-border last:border-0 hover:bg-surface-sunken/40">
-                {onDeleteRow ? (
-                  <td className="px-2 py-1.5 align-top">
-                    <button
-                      onClick={() => onDeleteRow(rowIndex)}
-                      disabled={!result.editable}
-                      className="text-content-subtle transition-colors hover:text-danger disabled:opacity-30"
-                      title={result.editable ? "Delete row" : (result.editableReason ?? "")}
-                    >
-                      ×
-                    </button>
-                  </td>
-                ) : null}
-                {result.columns.map((column) => (
-                  <td key={column.name} className="mono max-w-md px-3 py-1.5 align-top">
-                    <EditableCell
-                      value={row[column.name] ?? null}
-                      editable={editable}
-                      onCommit={(next) => onEdit?.(rowIndex, column.name, next)}
-                    />
-                  </td>
-                ))}
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
+              ) : null}
+              {sort?.column === column.name ? (
+                <span className="ml-1 text-accent">{sort.direction === "asc" ? "↑" : "↓"}</span>
+              ) : null}
+              <span className="mono ml-2 font-normal text-[10px] text-content-subtle">
+                {column.type}
+              </span>
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {result.rows.length === 0 ? (
+          <TableRow>
+            <TableCell
+              colSpan={result.columns.length + (onDeleteRow ? 1 : 0)}
+              className="px-3 py-10 text-center text-content-muted"
+            >
+              No rows.
+            </TableCell>
+          </TableRow>
+        ) : (
+          result.rows.map((row, rowIndex) => (
+            <TableRow key={rowIndex} className="border-b border-border last:border-0 hover:bg-surface-sunken/40">
+              {onDeleteRow ? (
+                <TableCell className="w-8 whitespace-normal px-2 py-1.5 align-top">
+                  <button
+                    onClick={() => onDeleteRow(rowIndex)}
+                    disabled={!result.editable}
+                    className="text-content-subtle transition-colors hover:text-danger disabled:opacity-30"
+                    title={result.editable ? "Delete row" : (result.editableReason ?? "")}
+                  >
+                    ×
+                  </button>
+                </TableCell>
+              ) : null}
+              {result.columns.map((column) => (
+                <TableCell key={column.name} className="mono max-w-md whitespace-normal px-3 py-1.5 align-top">
+                  <EditableCell
+                    value={row[column.name] ?? null}
+                    editable={editable}
+                    onCommit={(next) => onEdit?.(rowIndex, column.name, next)}
+                  />
+                </TableCell>
+              ))}
+            </TableRow>
+          ))
+        )}
+      </TableBody>
+    </Table>
   );
 }
 

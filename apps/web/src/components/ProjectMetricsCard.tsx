@@ -1,7 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ProjectMetrics } from "@justpostgres/shared";
-import { Card, formatBytes } from "./ui.js";
-import { api } from "../lib/api.js";
+
+import { api } from "@/lib/api";
+import { formatBytes } from "@/lib/format";
+
+import { Card } from "@/components/ui/card";
 
 function relativeAge(ms: number | null): string {
   if (ms === null) return "never";
@@ -118,7 +121,7 @@ export default function ProjectMetricsCard({
   if (!running) return null;
   if (error) {
     return (
-      <Card className="mb-4 px-4 py-3 text-xs text-content-muted">
+      <Card className="mb-4 gap-0 py-0 px-4 py-3 text-xs text-content-muted">
         Metrics are unavailable while the database is not accepting connections.
       </Card>
     );
@@ -128,7 +131,7 @@ export default function ProjectMetricsCard({
   const connectionPressure = data.maxConnections > 0 ? data.connections / data.maxConnections : 0;
 
   return (
-    <Card className="mb-4">
+    <Card className="mb-4 gap-0 py-0">
       {data.archiver.failingNow ? (
         <div className="border-b border-border bg-danger/10 px-4 py-3 text-xs text-danger">
           <strong>WAL archiving is failing.</strong> The most recent attempt failed

@@ -1,179 +1,156 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+/* `dark:` utilities follow the .dark class that ThemeToggle sets on <html>. */
+@custom-variant dark (&:is(.dark, .dark *));
 
 /*
- * Theme tokens, defined once for light and redefined for dark. Components
- * reference the semantic names only, so a future theme swap touches this file
- * and nothing else.
- *
- * The accent is the blue from the logo. It was teal, which is a perfectly good
- * colour and belonged to a different product — an interface whose accent
- * disagrees with its own mark reads as unfinished before anyone can say why.
+ * Single source of truth. light-dark() picks the first value in light mode and
+ * the second in dark mode, driven by `color-scheme` below. No duplicated
+ * palettes, no media-query blocks.
  */
-@theme {
-  --color-surface: #ffffff;
-  --color-surface-raised: #ffffff;
-  --color-surface-sunken: #f1f5f9;
-  /* One step above the page, for nav bars and table headers. */
-  --color-surface-overlay: #f8fafc;
-  --color-border: #e6eaf0;
-  --color-border-strong: #cbd5e1;
-  --color-content: #0b1220;
-  --color-content-muted: #55637a;
-  --color-content-subtle: #8b97ab;
+:root {
+  color-scheme: light dark; /* follow the OS by default */
 
-  --color-accent: #1d63d8;
-  --color-accent-hover: #1a56bd;
-  --color-accent-content: #ffffff;
-  /* Tint for selected rows and subtle accent fills. */
-  --color-accent-soft: #eaf1fd;
+  --surface: light-dark(#ffffff, #0b1016);
+  --surface-raised: light-dark(#ffffff, #111823);
+  --surface-sunken: light-dark(#f1f5f9, #080c11);
+  --surface-overlay: light-dark(#f8fafc, #0e141d);
+  --border: light-dark(#e6eaf0, #1d2836);
+  --border-strong: light-dark(#cbd5e1, #2f3d4f);
+  --content: light-dark(#0b1220, #e7edf5);
+  --content-muted: light-dark(#55637a, #93a1b5);
+  --content-subtle: light-dark(#8b97ab, #64748b);
 
-  --color-ok: #15803d;
-  --color-warn: #b45309;
-  --color-danger: #be123c;
+  --accent: light-dark(#1d63d8, #4d93ff);
+  --accent-hover: light-dark(#1a56bd, #6ba4ff);
+  --accent-content: light-dark(#ffffff, #06101f);
+  --accent-soft: light-dark(#eaf1fd, #12213a);
 
-  --shadow-card: 0 1px 2px rgb(11 18 32 / 0.05), 0 1px 3px rgb(11 18 32 / 0.04);
-  --shadow-raised: 0 4px 12px rgb(11 18 32 / 0.08), 0 1px 3px rgb(11 18 32 / 0.06);
-  --shadow-overlay: 0 16px 48px rgb(11 18 32 / 0.18);
+  --ok: light-dark(#15803d, #4ade80);
+  --warn: light-dark(#b45309, #fbbf24);
+  --danger: light-dark(#be123c, #fb7185);
+
+  --shadow-color: light-dark(rgb(11 18 32 / 0.08), rgb(0 0 0 / 0.45));
+
+  --radius: 0.625rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  @theme {
-    --color-surface: #0b1016;
-    --color-surface-raised: #111823;
-    --color-surface-sunken: #080c11;
-    --color-surface-overlay: #0e141d;
-    --color-border: #1d2836;
-    --color-border-strong: #2f3d4f;
-    --color-content: #e7edf5;
-    --color-content-muted: #93a1b5;
-    --color-content-subtle: #64748b;
+/* Explicit choice from the toggle overrides the OS. "system" removes the attribute. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"]  { color-scheme: dark; }
 
-    --color-accent: #4d93ff;
-    --color-accent-hover: #6ba4ff;
-    --color-accent-content: #06101f;
-    --color-accent-soft: #12213a;
+/* Tailwind utilities (bg-surface, text-content, border-border, bg-accent-soft, ...) */
+@theme inline {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-sans);
 
-    --color-ok: #4ade80;
-    --color-warn: #fbbf24;
-    --color-danger: #fb7185;
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-content: var(--content);
+  --color-content-muted: var(--content-muted);
+  --color-content-subtle: var(--content-subtle);
 
-    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4);
-    --shadow-raised: 0 4px 16px rgb(0 0 0 / 0.45);
-    --shadow-overlay: 0 20px 60px rgb(0 0 0 / 0.6);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-content: var(--accent-content);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+
+  --shadow-card: 0 1px 2px var(--shadow-color);
+  --shadow-raised: 0 4px 12px var(--shadow-color);
+  --shadow-overlay: 0 16px 48px var(--shadow-color);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+
+  /* shadcn's names, pointed at YOUR palette so its components match the app */
+  --color-background: var(--surface);
+  --color-foreground: var(--content);
+  --color-card: var(--surface-raised);
+  --color-card-foreground: var(--content);
+  --color-popover: var(--surface-raised);
+  --color-popover-foreground: var(--content);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-content);
+  --color-secondary: var(--surface-sunken);
+  --color-secondary-foreground: var(--content);
+  --color-muted: var(--surface-sunken);
+  --color-muted-foreground: var(--content-muted);
+  --color-accent-foreground: var(--accent-content);
+  --color-destructive: var(--danger);
+  --color-input: var(--border-strong);
+  --color-ring: var(--accent);
+
+  /* For the sidebar you're adding later */
+  --color-sidebar: var(--surface-overlay);
+  --color-sidebar-foreground: var(--content);
+  --color-sidebar-primary: var(--accent);
+  --color-sidebar-primary-foreground: var(--accent-content);
+  --color-sidebar-accent: var(--accent-soft);
+  --color-sidebar-accent-foreground: var(--accent);
+  --color-sidebar-border: var(--border);
+  --color-sidebar-ring: var(--accent);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    background-color: var(--surface);
+    color: var(--content);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Tabular figures: sizes, ports and counts line up in columns. */
+    font-variant-numeric: tabular-nums;
+  }
+
+  code, pre, .mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-feature-settings: "liga" 0;
+  }
+
+  /* One focus style, keyboard-only. */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-content);
   }
 }
 
-/*
- * The same dark palette again, this time for an explicit choice.
- *
- * `@theme` inside a media query only reacts to the OS. These two rules let the
- * in-app toggle override it in both directions, and they win on specificity
- * because `:root[data-theme]` beats the bare `:root` Tailwind generates.
- */
-:root[data-theme="dark"] {
-  --color-surface: #0b1016;
-  --color-surface-raised: #111823;
-  --color-surface-sunken: #080c11;
-  --color-surface-overlay: #0e141d;
-  --color-border: #1d2836;
-  --color-border-strong: #2f3d4f;
-  --color-content: #e7edf5;
-  --color-content-muted: #93a1b5;
-  --color-content-subtle: #64748b;
-  --color-accent: #4d93ff;
-  --color-accent-hover: #6ba4ff;
-  --color-accent-content: #06101f;
-  --color-accent-soft: #12213a;
-  --color-ok: #4ade80;
-  --color-warn: #fbbf24;
-  --color-danger: #fb7185;
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-raised: 0 4px 16px rgb(0 0 0 / 0.45);
-  --shadow-overlay: 0 20px 60px rgb(0 0 0 / 0.6);
-  color-scheme: dark;
-}
-
-:root[data-theme="light"] {
-  --color-surface: #ffffff;
-  --color-surface-raised: #ffffff;
-  --color-surface-sunken: #f1f5f9;
-  --color-surface-overlay: #f8fafc;
-  --color-border: #e6eaf0;
-  --color-border-strong: #cbd5e1;
-  --color-content: #0b1220;
-  --color-content-muted: #55637a;
-  --color-content-subtle: #8b97ab;
-  --color-accent: #1d63d8;
-  --color-accent-hover: #1a56bd;
-  --color-accent-content: #ffffff;
-  --color-accent-soft: #eaf1fd;
-  --color-ok: #15803d;
-  --color-warn: #b45309;
-  --color-danger: #be123c;
-  --shadow-card: 0 1px 2px rgb(11 18 32 / 0.05), 0 1px 3px rgb(11 18 32 / 0.04);
-  --shadow-raised: 0 4px 12px rgb(11 18 32 / 0.08), 0 1px 3px rgb(11 18 32 / 0.06);
-  --shadow-overlay: 0 16px 48px rgb(11 18 32 / 0.18);
-  color-scheme: light;
-}
-
-html {
-  color-scheme: light dark;
-}
-
-body {
-  background-color: var(--color-surface);
-  color: var(--color-content);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  /* Tabular figures everywhere: sizes, ports and counts sit in columns, and
-     proportional digits make them visibly ragged. */
-  font-variant-numeric: tabular-nums;
-}
-
-code, pre, .mono {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-feature-settings: "liga" 0;
-}
-
-/*
- * One focus style for the whole app, on `:focus-visible` only — so it appears
- * for keyboard navigation and not on every mouse click. Without this the
- * browser default was being suppressed by Tailwind's reset in places, which
- * makes the app unusable without a mouse.
- */
-:where(a, button, input, select, textarea, [tabindex]):focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-::selection {
-  background: var(--color-accent);
-  color: var(--color-accent-content);
-}
-
-/*
- * Scrollbars inside data tables and the SQL editor. Left alone on the page
- * itself, where the platform default is what people expect.
- */
+/* Thin scrollbars for data tables and the SQL editor. */
 .scroll-thin {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-border-strong) transparent;
+  scrollbar-color: var(--border-strong) transparent;
 }
-.scroll-thin::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
+.scroll-thin::-webkit-scrollbar { width: 10px; height: 10px; }
 .scroll-thin::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong);
+  background: var(--border-strong);
   border-radius: 8px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
-.scroll-thin::-webkit-scrollbar-track {
-  background: transparent;
-}
+.scroll-thin::-webkit-scrollbar-track { background: transparent; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

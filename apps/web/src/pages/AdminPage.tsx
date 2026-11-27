@@ -1,9 +1,29 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  CircleAlert,
+  CircleCheck,
+  CircleX,
+  DatabaseBackup,
+  Download,
+  KeyRound,
+  Loader2,
+  ShieldCheck,
+  TriangleAlert,
+} from "lucide-react";
 import type { AuditEntry } from "@justpostgres/shared";
-import { Badge, Button, Card, CardHeader, Input, PageHeader, formatBytes } from "../components/ui.js";
-import ObjectStorageCard from "../components/ObjectStorageCard.js";
-import { api, ApiError } from "../lib/api.js";
+
+import { api, ApiError } from "@/lib/api";
+import { formatBytes } from "@/lib/format";
+import { cn } from "@/lib/utils";
+
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import ObjectStorageCard from "@/components/ObjectStorageCard";
+import { PageHeader } from "@/components/PageHeader";
 
 /**
  * Actions are stored as dotted identifiers because they are meant to be
@@ -55,7 +75,16 @@ const ACTION_LABELS: Record<string, string> = {
   "control_plane.backup_downloaded": "downloaded a metadata backup",
 };
 
+type VerifyResult = { ok: boolean; detail: string };
+
+function Code({ children }: { children: React.ReactNode }) {
+  return <code className="font-mono text-foreground">{children}</code>;
+}
+
 function AuditRow({ entry }: { entry: AuditEntry }) {
+  // entry.at is epoch milliseconds; <time dateTime> needs a string.
+  const at = new Date(entry.at);
+
   let payload: Record<string, unknown> | null = null;
   try {
     payload = entry.payload ? JSON.parse(entry.payload) : null;
@@ -65,29 +94,60 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
 
   // Deletions, failures and anything that put a secret on someone's screen.
   // These are the rows a person scanning this page is looking for.
-  const notable = /delete|failed|discard|revealed|drop|promote/.test(entry.action);
+  const notable = /delete|failed|discard|revealed|drop|promote/.test(
+    entry.action,
+  );
+
+  const payloadText = payload
+    ? Object.entries(payload)
+        .map(
+          ([k, v]) =>
+            `${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`,
+        )
+        .join(" · ")
+    : null;
 
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3 last:border-0">
+    <div className="flex items-start justify-between gap-4 px-4 py-3">
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm">{entry.actor}</span>
-          <span className={`text-sm ${notable ? "text-warn" : "text-content-muted"}`}>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+          <span className="font-medium">{entry.actor}</span>
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5",
+              notable
+                ? "text-amber-700 dark:text-amber-400"
+                : "text-muted-foreground",
+            )}
+          >
+            {notable && <TriangleAlert className="size-3.5 shrink-0" />}
             {ACTION_LABELS[entry.action] ?? entry.action}
           </span>
         </div>
-        {payload ? (
-          <p className="mono mt-1 truncate text-xs text-content-subtle">
-            {Object.entries(payload)
-              .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
-              .join(" · ")}
+        {payloadText && (
+          <p
+            className="mt-1 truncate font-mono text-xs text-muted-foreground/80"
+            title={payloadText}
+          >
+            {payloadText}
           </p>
-        ) : null}
+        )}
       </div>
-      <div className="shrink-0 text-right">
-        <p className="mono text-xs text-content-subtle">{new Date(entry.at).toLocaleString()}</p>
-        {entry.ip ? <p className="mono text-xs text-content-subtle">{entry.ip}</p> : null}
+
+      <div className="shrink-0 text-right font-mono text-xs text-muted-foreground">
+        <time dateTime={at.toISOString()}>{at.toLocaleString()}</time>
+        {entry.ip && <p>{entry.ip}</p>}
       </div>
+    </div>
+  );
+}
+
+function AuditSkeleton() {
+  return (
+    <div className="space-y-3 p-4">
+      {Array.from({ length: 5 }, (_, i) => (
+        <Skeleton key={i} className="h-9 w-full" />
+      ))}
     </div>
   );
 }
@@ -95,14 +155,20 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
 export default function AdminPage() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const [verified, setVerified] = useState<Record<string, string>>({});
+  const [verified, setVerified] = useState<Record<string, VerifyResult>>({});
 
-  const audit = useQuery({ queryKey: ["audit"], queryFn: () => api.audit({ limit: 200 }) });
+  const audit = useQuery({
+    queryKey: ["audit"],
+    queryFn: () => api.audit({ limit: 200 }),
+  });
   const backups = useQuery({
     queryKey: ["cp-backups"],
     queryFn: api.controlPlaneBackups,
     refetchInterval: 30_000,
   });
+
+  const toMessage = (err: unknown) =>
+    err instanceof ApiError ? err.message : String(err);
 
   const run = useMutation({
     mutationFn: api.runControlPlaneBackup,
@@ -111,118 +177,191 @@ export default function AdminPage() {
       void queryClient.invalidateQueries({ queryKey: ["cp-backups"] });
       void queryClient.invalidateQueries({ queryKey: ["audit"] });
     },
-    onError: (err) => setError(err instanceof ApiError ? err.message : String(err)),
+    onError: (err) => setError(toMessage(err)),
   });
 
   const verify = useMutation({
     mutationFn: (name: string) => api.verifyControlPlaneBackup(name),
     onSuccess: (result, name) =>
-      setVerified((prev) => ({ ...prev, [name]: result.ok ? `ok — ${result.detail}` : result.detail })),
+      setVerified((prev) => ({
+        ...prev,
+        [name]: { ok: result.ok, detail: result.detail },
+      })),
+    onError: (err) => setError(toMessage(err)),
   });
 
+  const backupList = backups.data?.backups ?? [];
+  const entries = audit.data?.entries ?? [];
+
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Instance"
         description="What this control plane has been asked to do, and what would survive losing it."
+        className="mb-0"
       />
 
-      {error ? (
-        <Card className="mb-4 border-danger/40 px-4 py-3 text-sm text-danger">{error}</Card>
-      ) : null}
+      {error && (
+        <Alert variant="destructive">
+          <CircleAlert />
+          <AlertTitle>Something went wrong</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       <ObjectStorageCard />
 
-      <Card className="mb-6">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3.5">
-          <div>
+      <Card className="gap-0 overflow-hidden py-0">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3.5">
+          <div className="min-w-0">
             <h2 className="text-sm font-medium">Metadata store backups</h2>
-            <p className="mt-1 max-w-2xl text-xs text-content-muted">
-              The projects themselves are backed up by pgBackRest. This is the control plane's own
-              database — which projects exist, where their containers are, and their encrypted
-              credentials. Lose it and the databases keep running with nothing able to reach them.
+            <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
+              The projects themselves are backed up by pgBackRest. This is the
+              control plane's own database — which projects exist, where their
+              containers are, and their encrypted credentials. Lose it and the
+              databases keep running with nothing able to reach them.
             </p>
-            <p className="mt-2 max-w-2xl text-xs text-warn">
-              These files do not contain <span className="mono">JP_MASTER_KEY</span>, and are
-              useless without it. Keep the key somewhere else — a backup stored next to its key is
-              one theft, not two.
+            <p className="mt-2 flex max-w-2xl items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+              <KeyRound className="mt-px size-3.5 shrink-0" />
+              <span>
+                These files do not contain <Code>JP_MASTER_KEY</Code>, and are
+                useless without it. Keep the key somewhere else — a backup
+                stored next to its key is one theft, not two.
+              </span>
             </p>
           </div>
-          <Button variant="secondary" onClick={() => run.mutate()} loading={run.isPending}>
+
+          <Button
+            variant="secondary"
+            disabled={run.isPending}
+            onClick={() => run.mutate()}
+          >
+            {run.isPending ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <DatabaseBackup />
+            )}
             {run.isPending ? "Backing up…" : "Back up now"}
           </Button>
         </div>
 
-        {backups.data?.status.lastError ? (
-          <p className="border-b border-border px-4 py-2.5 text-xs text-danger">
+        {backups.data?.status.lastError && (
+          <p className="flex items-start gap-1.5 border-b px-4 py-2.5 text-xs text-destructive">
+            <CircleAlert className="mt-px size-3.5 shrink-0" />
             Last attempt failed: {backups.data.status.lastError}
           </p>
-        ) : null}
-
-        {(backups.data?.backups ?? []).length === 0 ? (
-          <p className="px-4 py-6 text-center text-sm text-content-muted">
-            No backups yet.
-          </p>
-        ) : (
-          (backups.data?.backups ?? []).map((b) => (
-            <div
-              key={b.name}
-              className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 last:border-0"
-            >
-              <div className="min-w-0">
-                <p className="mono text-sm">{b.name}</p>
-                <p className="mono mt-1 text-xs text-content-subtle">
-                  {formatBytes(b.sizeBytes)} · sha256 {b.sha256.slice(0, 16)}…
-                </p>
-                {verified[b.name] ? (
-                  <p className="mono mt-1 text-xs text-content-subtle">{verified[b.name]}</p>
-                ) : null}
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => verify.mutate(b.name)}
-                  loading={verify.isPending}
-                >
-                  Verify
-                </Button>
-                <a
-                  className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-surface-raised"
-                  href={`/api/admin/control-plane-backups/${b.name}/download`}
-                >
-                  Download
-                </a>
-              </div>
-            </div>
-          ))
         )}
 
-        <p className="px-4 py-3 text-xs text-content-subtle">
+        {backups.isLoading ? (
+          <div className="p-4">
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : backupList.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+            No backups yet. Select “Back up now” to create the first one.
+          </p>
+        ) : (
+          <div className="divide-y">
+            {backupList.map((b) => {
+              const result = verified[b.name];
+              const verifying = verify.isPending && verify.variables === b.name;
+
+              return (
+                <div
+                  key={b.name}
+                  className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="font-mono text-sm break-all">{b.name}</p>
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">
+                      {formatBytes(b.sizeBytes)} · sha256 {b.sha256.slice(0, 16)}…
+                    </p>
+                    {result && (
+                      <p
+                        className={cn(
+                          "mt-1 flex items-start gap-1.5 font-mono text-xs",
+                          result.ok
+                            ? "text-emerald-700 dark:text-emerald-400"
+                            : "text-destructive",
+                        )}
+                      >
+                        {result.ok ? (
+                          <CircleCheck className="mt-px size-3.5 shrink-0" />
+                        ) : (
+                          <CircleX className="mt-px size-3.5 shrink-0" />
+                        )}
+                        {result.ok ? `Verified — ${result.detail}` : result.detail}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex shrink-0 gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={verifying}
+                      onClick={() => verify.mutate(b.name)}
+                    >
+                      {verifying ? (
+                        <Loader2 className="animate-spin" />
+                      ) : (
+                        <ShieldCheck />
+                      )}
+                      Verify
+                    </Button>
+                    <a
+                      className={buttonVariants({ variant: "outline", size: "sm" })}
+                      href={`/api/admin/control-plane-backups/${encodeURIComponent(b.name)}/download`}
+                    >
+                      <Download />
+                      Download
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <p className="border-t px-4 py-3 text-xs text-muted-foreground">
           To restore: stop the control plane, put the file where{" "}
-          <span className="mono">JP_DATA_DIR</span> is empty, and start it with{" "}
-          <span className="mono">JP_RESTORE_CONTROL_PLANE_FROM</span> pointing at it. It refuses to
-          overwrite an existing store, so leaving that variable set cannot roll you back later.
+          <Code>JP_DATA_DIR</Code> is empty, and start it with{" "}
+          <Code>JP_RESTORE_CONTROL_PLANE_FROM</Code> pointing at it. It refuses
+          to overwrite an existing store, so leaving that variable set cannot
+          roll you back later.
         </p>
       </Card>
 
-      <div className="mb-2 flex items-center gap-2">
-        <h2 className="text-sm font-medium">Audit log</h2>
-        <Badge tone="neutral">{audit.data?.entries.length ?? 0}</Badge>
-      </div>
-      <p className="mb-3 max-w-3xl text-xs text-content-muted">
-        Every action that changed something, with who did it and from where. A tool holding superuser
-        credentials for every database on the host has to be able to answer "who deleted that".
-      </p>
+      <section>
+        <div className="mb-1.5 flex items-center gap-2">
+          <h2 className="text-sm font-medium">Audit log</h2>
+          <Badge variant="secondary" className="tabular-nums">
+            {entries.length}
+          </Badge>
+        </div>
+        <p className="mb-3 max-w-3xl text-xs text-muted-foreground">
+          Every action that changed something, with who did it and from where. A
+          tool holding superuser credentials for every database on the host has
+          to be able to answer “who deleted that”.
+        </p>
 
-      <Card>
-        {audit.isLoading ? (
-          <p className="px-5 py-8 text-center text-sm text-content-muted">Loading the audit log…</p>
-        ) : (audit.data?.entries ?? []).length === 0 ? (
-          <p className="px-4 py-8 text-center text-sm text-content-muted">Nothing recorded yet.</p>
-        ) : (
-          (audit.data?.entries ?? []).map((entry) => <AuditRow key={entry.id} entry={entry} />)
-        )}
-      </Card>
-    </>
+        <Card className="gap-0 overflow-hidden py-0">
+          {audit.isLoading ? (
+            <AuditSkeleton />
+          ) : entries.length === 0 ? (
+            <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+              Nothing recorded yet. Actions that change something will appear
+              here.
+            </p>
+          ) : (
+            <div className="divide-y">
+              {entries.map((entry) => (
+                <AuditRow key={entry.id} entry={entry} />
+              ))}
+            </div>
+          )}
+        </Card>
+      </section>
+    </div>
   );
 }
