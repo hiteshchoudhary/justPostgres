@@ -2,7 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import AccountMenu from "./AccountMenu.js";
 import ThemeToggle from "./ThemeToggle.js";
-import { Wordmark } from "./ui.js";
+import { Wordmark } from "@/components/Logo";
 import { api, type AdminSummary } from "../lib/api.js";
 
 const NAV = [
@@ -26,13 +26,6 @@ const STATUS_LABEL = {
   unknown: "Connecting to the control plane",
 } as const;
 
-/**
- * Health, as a dot rather than a word.
- *
- * It was a dot and the word "ok", which spends a third of the header saying
- * the least interesting thing on the page. The dot carries the state, the
- * tooltip carries the detail, and only a problem gets to use words.
- */
 function HealthPill({ status }: { status: keyof typeof STATUS_COLOR }) {
   return (
     <NavLink
@@ -54,7 +47,11 @@ function HealthPill({ status }: { status: keyof typeof STATUS_COLOR }) {
   );
 }
 
-export default function Layout({ admin }: { admin: AdminSummary | null }) {
+type LayoutProps = {
+  admin: AdminSummary | null;
+};
+
+export default function Layout({ admin }: LayoutProps) {
   const { data: health } = useQuery({
     queryKey: ["health"],
     queryFn: api.health,
@@ -62,34 +59,42 @@ export default function Layout({ admin }: { admin: AdminSummary | null }) {
   });
 
   return (
-    <div className="min-h-screen">
-      {/* Sticky, because the nav is how you get between a project's tabs and
-          the rest of the instance, and long tables put it off screen. */}
-      <header className="sticky top-0 z-40 border-b border-border bg-surface-overlay/85 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center gap-3 px-6 py-2.5">
-          <NavLink to="/projects" className="mr-1 flex items-center" aria-label="justpostgres">
+    <div className="flex min-h-screen flex-col">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-3 focus:z-50 focus:rounded-md focus:bg-surface-raised focus:px-3 focus:py-2 focus:text-sm"
+      >
+        Skip to content
+      </a>
+      {/* Full-width app bar: brand + primary nav on the left, tools on the right. */}
+      <header className="sticky top-0 z-40 h-14 shrink-0 border-b border-border bg-surface-overlay/85 backdrop-blur-md">
+        <div className="flex h-full items-center gap-6 px-4">
+          <NavLink to="/projects" className="flex shrink-0 items-center" aria-label="justpostgres">
             <Wordmark />
           </NavLink>
 
-          <nav className="flex items-center gap-0.5">
-            {NAV.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  `rounded-lg px-3 py-1.5 text-sm transition-colors ${
-                    isActive
-                      ? "bg-accent-soft font-medium text-accent"
-                      : "text-content-muted hover:bg-surface-sunken hover:text-content"
-                  }`
-                }
-              >
-                {item.label}
-              </NavLink>
-            ))}
+          <nav aria-label="Primary" className="min-w-0 flex-1">
+            <ul className="flex items-center gap-1 overflow-x-auto [scrollbar-width:none]">
+              {NAV.map((item) => (
+                <li key={item.to} className="shrink-0">
+                  <NavLink
+                    to={item.to}
+                    className={({ isActive }) =>
+                      `block rounded-md px-3 py-1.5 text-sm transition-colors ${
+                        isActive
+                          ? "bg-accent-soft font-medium text-accent"
+                          : "text-content-muted hover:bg-surface-sunken hover:text-content"
+                      }`
+                    }
+                  >
+                    {item.label}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
           </nav>
 
-          <div className="ml-auto flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <HealthPill status={health?.status ?? "unknown"} />
             <ThemeToggle />
             {admin ? <AccountMenu admin={admin} /> : null}
@@ -97,16 +102,18 @@ export default function Layout({ admin }: { admin: AdminSummary | null }) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-6 py-8">
-        <Outlet />
-      </main>
-
-      <footer className="mx-auto max-w-7xl px-6 pb-8 pt-2">
-        <p className="text-xs text-content-subtle">
-          justpostgres {health?.version ?? ""}
-          {health ? ` · up ${Math.floor(health.uptimeSeconds / 3600)}h` : ""}
-        </p>
-      </footer>
+      {/* Below the bar: scrolling content. */}
+      <div className="flex flex-1">
+        <div className="flex min-w-0 flex-1 flex-col p-8 pt-4">
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className="flex min-w-0 flex-1 flex-col"
+          >
+            <Outlet />
+          </main>
+        </div>
+      </div>
     </div>
   );
 }

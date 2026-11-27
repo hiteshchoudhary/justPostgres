@@ -15,17 +15,23 @@ function read(): Theme {
   return "system";
 }
 
+function systemIsDark() {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
 /**
  * Apply the choice by stamping the root element.
  *
- * "system" removes the attribute rather than resolving it to light or dark, so
- * the CSS media query takes over again and the app follows the OS live —
- * including when it flips at sunset while the tab is open.
+ * "system" removes the data-theme attribute so the CSS media query takes over,
+ * and the .dark class is kept in sync for shadcn and Tailwind dark: variants.
  */
 function apply(theme: Theme) {
   const root = document.documentElement;
   if (theme === "system") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", theme);
+
+  const dark = theme === "dark" || (theme === "system" && systemIsDark());
+  root.classList.toggle("dark", dark);
 }
 
 const ORDER: Theme[] = ["system", "light", "dark"];
@@ -49,9 +55,13 @@ export default function ThemeToggle() {
     apply(theme);
     try {
       localStorage.setItem(STORAGE_KEY, theme);
-    } catch {
-      // Not being able to remember the choice is not a reason to refuse it.
-    }
+    } catch {}
+
+    if (theme !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => apply("system");
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
   }, [theme]);
 
   const next = () => setTheme((t) => ORDER[(ORDER.indexOf(t) + 1) % ORDER.length]!);

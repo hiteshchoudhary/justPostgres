@@ -1,16 +1,28 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 import { PG_MAJOR_VERSIONS, type UpgradeRecord } from "@justpostgres/shared";
-import { Badge, Button, Card, Modal, PageHeader } from "../components/ui.js";
-import { api, ApiError } from "../lib/api.js";
+import { api, ApiError } from "@/lib/api";
+import { InPageHeader } from "@/components/InPageHeader";
+import { ToneBadge, type Tone } from "@/components/ToneBadge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
-const STATE_TONE = {
+const STATE_TONE: Record<UpgradeRecord["state"], Tone> = {
   running: "accent",
   succeeded: "ok",
   failed: "danger",
   rolled_back: "warn",
-} as const;
+};
 
 function formatWhen(ms: number | null): string {
   return ms ? new Date(ms).toLocaleString() : "—";
@@ -87,16 +99,16 @@ export default function UpgradePage() {
 
   return (
     <>
-      <PageHeader
+      <InPageHeader
         title="Postgres version"
         description="An upgrade dumps every database out of the running version and loads it into the new one. The old data directory is kept afterwards, untouched, so the way back is starting it again rather than restoring a backup."
       />
 
       {error ? (
-        <Card className="mb-4 border-danger/40 px-4 py-3 text-sm text-danger">{error}</Card>
+        <Card className="mb-4 gap-0 py-0 border-danger/40 px-4 py-3 text-sm text-danger">{error}</Card>
       ) : null}
 
-      <Card className="mb-4 p-4">
+      <Card className="mb-4 gap-0 py-0 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-xs font-medium text-content-muted">Running</div>
@@ -104,7 +116,7 @@ export default function UpgradePage() {
           </div>
 
           {inFlight ? (
-            <Badge tone="accent">upgrading to {inFlight.toMajor}</Badge>
+            <ToneBadge tone="accent">upgrading to {inFlight.toMajor}</ToneBadge>
           ) : available.length === 0 ? (
             <p className="text-sm text-content-muted">
               Already on the newest version this build knows about.
@@ -122,7 +134,7 @@ export default function UpgradePage() {
       </Card>
 
       {upgrades.length > 0 ? (
-        <Card>
+        <Card className="gap-0 py-0">
           {upgrades.map((u) => (
             <div key={u.id} className="border-b border-border px-4 py-3.5 last:border-0">
               <div className="flex items-start justify-between gap-4">
@@ -131,7 +143,7 @@ export default function UpgradePage() {
                     <span className="mono text-sm">
                       {u.fromMajor} → {u.toMajor}
                     </span>
-                    <Badge tone={STATE_TONE[u.state]}>{u.state.replace("_", " ")}</Badge>
+                    <ToneBadge tone={STATE_TONE[u.state]}>{u.state.replace("_", " ")}</ToneBadge>
                   </div>
                   <p className="mt-1 text-xs text-content-subtle">
                     {formatWhen(u.startedAt)}
@@ -156,9 +168,10 @@ export default function UpgradePage() {
                 {u.state === "succeeded" && u.previousVolumeName && !u.previousDiscardedAt ? (
                   <Button
                     variant="secondary"
+                    disabled={discard.isPending}
                     onClick={() => discard.mutate(u.id)}
-                    loading={discard.isPending}
                   >
+                    {discard.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
                     Delete old data
                   </Button>
                 ) : null}
@@ -169,47 +182,57 @@ export default function UpgradePage() {
       ) : null}
 
       {target !== null ? (
-        <Modal
-          title={`Upgrade to Postgres ${target}`}
-          description="Read this before confirming. The database goes offline part way through, and its recovery point resets."
-          onClose={() => setTarget(null)}
+        <Dialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setTarget(null);
+          }}
         >
-          {plan.isLoading ? (
-            <p className="text-sm text-content-muted">Working out what this involves…</p>
-          ) : plan.error || !plan.data ? (
-            <p className="text-sm text-danger">
-              {plan.error instanceof ApiError ? plan.error.message : "Could not plan the upgrade."}
-            </p>
-          ) : (
-            <>
-              <ol className="list-decimal space-y-1 pl-5 text-xs text-content-muted">
-                {plan.data.steps.map((step) => (
-                  <li key={step}>{step}</li>
-                ))}
-              </ol>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Upgrade to Postgres {target}</DialogTitle>
+              <DialogDescription>
+                Read this before confirming. The database goes offline part way through, and its recovery point resets.
+              </DialogDescription>
+            </DialogHeader>
+            {plan.isLoading ? (
+              <p className="text-sm text-content-muted">Working out what this involves…</p>
+            ) : plan.error || !plan.data ? (
+              <p className="text-sm text-danger">
+                {plan.error instanceof ApiError ? plan.error.message : "Could not plan the upgrade."}
+              </p>
+            ) : (
+              <>
+                <ol className="list-decimal space-y-1 pl-5 text-xs text-content-muted">
+                  {plan.data.steps.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
 
-              <div className="mt-4 space-y-2">
-                {plan.data.warnings.map((w) => (
-                  <div key={w} className="rounded-md bg-warn/10 px-3 py-2.5 text-xs text-warn">
-                    {w}
-                  </div>
-                ))}
-              </div>
+                <div className="mt-4 space-y-2">
+                  {plan.data.warnings.map((w) => (
+                    <div key={w} className="rounded-md bg-warn/10 px-3 py-2.5 text-xs text-warn">
+                      {w}
+                    </div>
+                  ))}
+                </div>
 
-              <div className="mt-5 flex justify-end gap-2">
-                <Button variant="secondary" onClick={() => setTarget(null)}>
-                  Cancel
-                </Button>
-                <Button
-                  onClick={() => start.mutate()}
-                  loading={start.isPending} disabled={!plan.data.imageAvailable}
-                >
-                  {start.isPending ? "Starting…" : `Upgrade to ${target}`}
-                </Button>
-              </div>
-            </>
-          )}
-        </Modal>
+                <DialogFooter>
+                  <Button variant="secondary" onClick={() => setTarget(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    disabled={!plan.data.imageAvailable || start.isPending}
+                    onClick={() => start.mutate()}
+                  >
+                    {start.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
+                    {start.isPending ? "Starting…" : `Upgrade to ${target}`}
+                  </Button>
+                </DialogFooter>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
       ) : null}
     </>
   );

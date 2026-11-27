@@ -1,9 +1,25 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Badge, Button, Card, Input, Loading, Modal, PageHeader, formatBytes, relativeTime } from "../components/ui.js";
+import { Loader2 } from "lucide-react";
 import { LSN_PATTERN } from "@justpostgres/shared";
-import { api, ApiError } from "../lib/api.js";
+import { api, ApiError } from "@/lib/api";
+import { formatBytes, relativeTime } from "@/lib/format";
+import { InPageHeader } from "@/components/InPageHeader";
+import { Loading } from "@/components/Loading";
+import { ToneBadge } from "@/components/ToneBadge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 function formatWhen(ms: number | null): string {
   if (!ms) return "—";
@@ -48,74 +64,107 @@ function RestoreModal({
   });
 
   return (
-    <Modal
-      title="Restore to a point in time"
-      description="This creates a new project. The one you are restoring from is not touched, so you can inspect the result before deciding anything."
-      onClose={onClose}
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
     >
-      <div className="space-y-4">
-        <div className="flex gap-1">
-          {(["time", "lsn", "latest"] as const).map((option) => (
-            <button
-              key={option}
-              onClick={() => setMode(option)}
-              className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-                mode === option
-                  ? "bg-surface-sunken font-medium text-content"
-                  : "text-content-muted hover:text-content"
-              }`}
-            >
-              {option === "time" ? "A point in time" : option === "lsn" ? "A log position" : "Everything, up to now"}
-            </button>
-          ))}
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Restore to a point in time</DialogTitle>
+          <DialogDescription>
+            This creates a new project. The one you are restoring from is not touched, so you can inspect the result before deciding anything.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="flex gap-1">
+            {(["time", "lsn", "latest"] as const).map((option) => (
+              <button
+                key={option}
+                onClick={() => setMode(option)}
+                className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+                  mode === option
+                    ? "bg-surface-sunken font-medium text-content"
+                    : "text-content-muted hover:text-content"
+                }`}
+              >
+                {option === "time" ? "A point in time" : option === "lsn" ? "A log position" : "Everything, up to now"}
+              </button>
+            ))}
+          </div>
+
+          {mode === "lsn" ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="restore-lsn" className="text-xs font-medium text-content-muted">
+                Restore to log position
+              </Label>
+              <Input
+                id="restore-lsn"
+                value={lsn}
+                onChange={(e) => setLsn(e.target.value)}
+                placeholder="16/B374D848"
+                aria-describedby="restore-lsn-hint"
+              />
+              <p id="restore-lsn-hint" className="text-xs text-content-subtle">
+                From pg_current_wal_lsn() or a Postgres log line. Stops exactly there, even between two transactions that committed in the same second.
+              </p>
+            </div>
+          ) : mode === "time" ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="restore-time" className="text-xs font-medium text-content-muted">
+                Restore to
+              </Label>
+              <Input
+                id="restore-time"
+                type="datetime-local"
+                step={1}
+                value={when}
+                onChange={(e) => setWhen(e.target.value)}
+                aria-describedby="restore-time-hint"
+              />
+              <p id="restore-time-hint" className="text-xs text-content-subtle">
+                Restorable between {formatWhen(recoveryWindow.earliest)} and {formatWhen(recoveryWindow.latest)}.
+              </p>
+            </div>
+          ) : (
+            <p className="rounded-md bg-surface-sunken px-3 py-2 text-xs text-content-muted">
+              Replays every archived transaction. Use this after losing a database outright.
+            </p>
+          )}
+
+          <div className="space-y-1.5">
+            <Label htmlFor="restore-name" className="text-xs font-medium text-content-muted">
+              Name for the new project
+            </Label>
+            <Input
+              id="restore-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="auto"
+            />
+          </div>
+
+          {restore.error ? (
+            <p className="rounded-md bg-danger/10 px-3 py-2 text-xs text-danger">
+              {restore.error instanceof ApiError ? restore.error.message : "Could not start the restore."}
+            </p>
+          ) : null}
         </div>
-
-        {mode === "lsn" ? (
-          <Input
-            label="Restore to log position"
-            value={lsn}
-            onChange={(e) => setLsn(e.target.value)}
-            placeholder="16/B374D848"
-            hint="From pg_current_wal_lsn() or a Postgres log line. Stops exactly there, even between two transactions that committed in the same second."
-          />
-        ) : mode === "time" ? (
-          <Input
-            label="Restore to"
-            type="datetime-local"
-            step={1}
-            value={when}
-            onChange={(e) => setWhen(e.target.value)}
-            hint={`Restorable between ${formatWhen(recoveryWindow.earliest)} and ${formatWhen(recoveryWindow.latest)}.`}
-          />
-        ) : (
-          <p className="rounded-md bg-surface-sunken px-3 py-2 text-xs text-content-muted">
-            Replays every archived transaction. Use this after losing a database outright.
-          </p>
-        )}
-
-        <Input
-          label="Name for the new project"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="auto"
-        />
-
-        {restore.error ? (
-          <p className="rounded-md bg-danger/10 px-3 py-2 text-xs text-danger">
-            {restore.error instanceof ApiError ? restore.error.message : "Could not start the restore."}
-          </p>
-        ) : null}
-
-        <div className="flex justify-end gap-2 pt-1">
+        <DialogFooter>
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={restore.isPending} disabled={lsnInvalid} onClick={() => restore.mutate()}>
+          <Button
+            disabled={lsnInvalid || restore.isPending}
+            onClick={() => restore.mutate()}
+          >
+            {restore.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
             {restore.isPending ? "Starting…" : "Restore"}
           </Button>
-        </div>
-      </div>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -179,7 +228,7 @@ function MoveToObjectStorage({
   const lastMove = jobs.data?.jobs.find((job) => job.type === "backup.migrate");
   if (repoType === "s3" && awaitingFirstBackup && lastMove?.state === "failed") {
     return (
-      <Card className="mb-4 border-danger/30 p-4">
+      <Card className="mb-4 gap-0 py-0 border-danger/30 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="max-w-2xl">
             <h3 className="text-sm font-medium">Moving backups to object storage did not finish</h3>
@@ -192,7 +241,8 @@ function MoveToObjectStorage({
             ) : null}
             {error ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
           </div>
-          <Button onClick={() => migrate.mutate()} loading={migrate.isPending}>
+          <Button disabled={migrate.isPending} onClick={() => migrate.mutate()}>
+            {migrate.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
             {migrate.isPending ? "Retrying…" : "Retry the move"}
           </Button>
         </div>
@@ -207,7 +257,7 @@ function MoveToObjectStorage({
   // so where the window is shown, rather than only in the install guide.
   if (!configured) {
     return (
-      <Card className="mb-4 border-warn/30 p-4">
+      <Card className="mb-4 gap-0 py-0 border-warn/30 p-4">
         <h3 className="text-sm font-medium">Backups are on this host only</h3>
         <p className="mt-1 max-w-2xl text-xs text-content-muted">
           Point-in-time restore protects against mistakes — a dropped table, a bad migration. It does not
@@ -223,7 +273,7 @@ function MoveToObjectStorage({
   }
 
   return (
-    <Card className="mb-4 border-accent/30 p-4">
+    <Card className="mb-4 gap-0 py-0 border-accent/30 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-2xl">
           <h3 className="text-sm font-medium">
@@ -241,7 +291,8 @@ function MoveToObjectStorage({
           </p>
           {error ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
         </div>
-        <Button onClick={() => migrate.mutate()} loading={migrate.isPending}>
+        <Button disabled={migrate.isPending} onClick={() => migrate.mutate()}>
+          {migrate.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
           {migrate.isPending ? "Moving…" : "Move to object storage"}
         </Button>
       </div>
@@ -277,7 +328,7 @@ export default function BackupsPage() {
   }
   if (error || !data) {
     return (
-      <Card className="px-6 py-14 text-center text-sm text-danger">
+      <Card className="gap-0 py-0 px-6 py-14 text-center text-sm text-danger">
         {error instanceof ApiError ? error.message : "Could not read backup status."}
       </Card>
     );
@@ -288,15 +339,17 @@ export default function BackupsPage() {
 
   return (
     <>
-      <PageHeader
+      <InPageHeader
         title="Backups"
         description="Continuous write-ahead log archiving, so this project can be restored to any moment in its recovery window — not just to last night."
         actions={
           <>
-            <Button variant="secondary" loading={verify.isPending} onClick={() => verify.mutate()}>
+            <Button variant="secondary" disabled={verify.isPending} onClick={() => verify.mutate()}>
+              {verify.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
               Verify restore
             </Button>
-            <Button variant="secondary" loading={runBackup.isPending} onClick={() => runBackup.mutate()}>
+            <Button variant="secondary" disabled={runBackup.isPending} onClick={() => runBackup.mutate()}>
+              {runBackup.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
               Back up now
             </Button>
             <Button disabled={status.awaitingFirstBackup} onClick={() => setRestoring(true)}>
@@ -307,9 +360,9 @@ export default function BackupsPage() {
       />
 
       {status.archivingHealthy === false ? (
-        <Card className="mb-4 border-danger/50 p-4">
+        <Card className="mb-4 gap-0 py-0 border-danger/50 p-4">
           <div className="mb-1 flex items-center gap-2">
-            <Badge tone="danger">archiving is failing</Badge>
+            <ToneBadge tone="danger">archiving is failing</ToneBadge>
             <span className="text-xs text-content-muted">
               checked {relativeTime(status.archivingCheckedAt)}
             </span>
@@ -327,7 +380,7 @@ export default function BackupsPage() {
       ) : null}
 
       {status.awaitingFirstBackup ? (
-        <Card className="mb-4 border-warn/50 px-4 py-3">
+        <Card className="mb-4 gap-0 py-0 border-warn/50 px-4 py-3">
           <p className="text-xs text-warn">
             No completed backup yet, so there is currently <strong>no recovery point at all</strong>.
             The first one runs on the schedule, or start it now.
@@ -336,7 +389,7 @@ export default function BackupsPage() {
       ) : null}
 
       <div className="mb-4 grid gap-4 sm:grid-cols-2">
-        <Card className="p-4">
+        <Card className="gap-0 py-0 p-4">
           <div className="text-xs font-medium text-content-muted">Recovery window</div>
           {status.window && !status.window.empty ? (
             <>
@@ -357,7 +410,7 @@ export default function BackupsPage() {
           )}
         </Card>
 
-        <Card className="p-4">
+        <Card className="gap-0 py-0 p-4">
           <div className="text-xs font-medium text-content-muted">Schedule</div>
           <dl className="mt-2 space-y-1.5 text-xs">
             {[
@@ -378,7 +431,7 @@ export default function BackupsPage() {
 
       <MoveToObjectStorage projectId={id} repoType={status.repoType} awaitingFirstBackup={status.awaitingFirstBackup} />
 
-      <Card className="mb-4 p-4">
+      <Card className="mb-4 gap-0 py-0 p-4">
         <div className="flex items-center justify-between">
           <div>
             <div className="text-xs font-medium text-content-muted">Last restore verification</div>
@@ -387,11 +440,11 @@ export default function BackupsPage() {
             </p>
           </div>
           {lastCheck ? (
-            <Badge tone={lastCheck.status === "passed" ? "ok" : lastCheck.status === "failed" ? "danger" : "accent"}>
+            <ToneBadge tone={lastCheck.status === "passed" ? "ok" : lastCheck.status === "failed" ? "danger" : "accent"}>
               {lastCheck.status}
-            </Badge>
+            </ToneBadge>
           ) : (
-            <Badge tone="warn">never run</Badge>
+            <ToneBadge tone="warn">never run</ToneBadge>
           )}
         </div>
         {lastCheck ? (
@@ -402,12 +455,12 @@ export default function BackupsPage() {
       </Card>
 
       {promote.error ? (
-        <Card className="mb-4 border-danger/40 px-4 py-3 text-xs text-danger">
+        <Card className="mb-4 gap-0 py-0 border-danger/40 px-4 py-3 text-xs text-danger">
           {promote.error instanceof ApiError ? promote.error.message : "Promote failed."}
         </Card>
       ) : null}
 
-      <Card className="mb-4 p-4">
+      <Card className="mb-4 gap-0 py-0 p-4">
         <div className="flex items-center justify-between gap-4">
           <div>
             <div className="text-xs font-medium">Promote this project</div>
@@ -417,13 +470,14 @@ export default function BackupsPage() {
               restored project.
             </p>
           </div>
-          <Button variant="secondary" loading={promote.isPending} onClick={() => promote.mutate()}>
+          <Button variant="secondary" disabled={promote.isPending} onClick={() => promote.mutate()}>
+            {promote.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
             {promote.isPending ? "Promoting…" : "Promote"}
           </Button>
         </div>
       </Card>
 
-      <Card>
+      <Card className="gap-0 py-0">
         <div className="border-b border-border px-4 py-2.5 text-xs font-medium text-content-muted">
           Recent runs
         </div>
@@ -435,11 +489,11 @@ export default function BackupsPage() {
               {runs.map((run) => (
                 <tr key={run.id} className="border-b border-border last:border-0">
                   <td className="px-4 py-2.5">
-                    <Badge
+                    <ToneBadge
                       tone={run.status === "succeeded" ? "ok" : run.status === "failed" ? "danger" : "accent"}
                     >
                       {run.status}
-                    </Badge>
+                    </ToneBadge>
                   </td>
                   <td className="mono px-4 py-2.5">{run.type}</td>
                   <td className="mono px-4 py-2.5 text-content-muted">{run.label ?? "—"}</td>

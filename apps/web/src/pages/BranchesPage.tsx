@@ -1,9 +1,32 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 import type { BranchNode } from "@justpostgres/shared";
-import { Badge, Button, Card, Input, Loading, Modal, PageHeader, Select, relativeTime } from "../components/ui.js";
-import { api, ApiError } from "../lib/api.js";
+import { api, ApiError } from "@/lib/api";
+import { relativeTime } from "@/lib/format";
+import { InPageHeader } from "@/components/InPageHeader";
+import { Loading } from "@/components/Loading";
+import { ToneBadge } from "@/components/ToneBadge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 function toLocalInputValue(ms: number): string {
   return new Date(ms - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 19);
@@ -43,81 +66,115 @@ function CreateBranchModal({ projectId, onClose }: { projectId: string; onClose:
   });
 
   return (
-    <Modal
-      title="New branch"
-      description="A full, independent copy of this project that you can break freely."
-      onClose={onClose}
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
     >
-      <div className="space-y-4">
-        <div className="flex gap-1">
-          {(["now", "time"] as const).map((option) => (
-            <button
-              key={option}
-              onClick={() => setFrom(option)}
-              className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-                from === option
-                  ? "bg-surface-sunken font-medium text-content"
-                  : "text-content-muted hover:text-content"
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>New branch</DialogTitle>
+          <DialogDescription>
+            A full, independent copy of this project that you can break freely.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="flex gap-1">
+            {(["now", "time"] as const).map((option) => (
+              <button
+                key={option}
+                onClick={() => setFrom(option)}
+                className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+                  from === option
+                    ? "bg-surface-sunken font-medium text-content"
+                    : "text-content-muted hover:text-content"
+                }`}
+              >
+                {option === "now" ? "From right now" : "From a point in time"}
+              </button>
+            ))}
+          </div>
+
+          {from === "time" ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="branch-point" className="text-xs font-medium text-content-muted">
+                Branch point
+              </Label>
+              <Input
+                id="branch-point"
+                type="datetime-local"
+                step={1}
+                value={when}
+                onChange={(e) => setWhen(e.target.value)}
+              />
+            </div>
+          ) : null}
+
+          {plan ? (
+            <div
+              className={`rounded-md px-3 py-2 text-xs ${
+                plan.plan.method === "cow" ? "bg-ok/10 text-ok" : "bg-surface-sunken text-content-muted"
               }`}
             >
-              {option === "now" ? "From right now" : "From a point in time"}
-            </button>
-          ))}
-        </div>
+              <span className="font-medium">
+                {plan.plan.method === "cow" ? "Copy-on-write" : "Point-in-time restore"}
+              </span>
+              <span className="mt-0.5 block">{plan.plan.reason}</span>
+            </div>
+          ) : null}
 
-        {from === "time" ? (
-          <Input
-            label="Branch point"
-            type="datetime-local"
-            step={1}
-            value={when}
-            onChange={(e) => setWhen(e.target.value)}
-          />
-        ) : null}
-
-        {plan ? (
-          <div
-            className={`rounded-md px-3 py-2 text-xs ${
-              plan.plan.method === "cow" ? "bg-ok/10 text-ok" : "bg-surface-sunken text-content-muted"
-            }`}
-          >
-            <span className="font-medium">
-              {plan.plan.method === "cow" ? "Copy-on-write" : "Point-in-time restore"}
-            </span>
-            <span className="mt-0.5 block">{plan.plan.reason}</span>
+          <div className="space-y-1.5">
+            <Label htmlFor="branch-name" className="text-xs font-medium text-content-muted">
+              Name
+            </Label>
+            <Input
+              id="branch-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="auto"
+            />
           </div>
-        ) : null}
 
-        <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="auto" />
+          <div className="space-y-1.5">
+            <Label htmlFor="branch-ttl" className="text-xs font-medium text-content-muted">
+              Delete automatically after
+            </Label>
+            <Select value={String(ttl)} onValueChange={(v) => setTtl(Number(v))}>
+              <SelectTrigger id="branch-ttl" aria-describedby="branch-ttl-hint">
+                <SelectValue>
+                  {ttl === 0 ? "Never" : ttl === 1 ? "1 hour" : ttl === 24 ? "1 day" : "1 week"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">1 hour</SelectItem>
+                <SelectItem value="24">1 day</SelectItem>
+                <SelectItem value="168">1 week</SelectItem>
+                <SelectItem value="0">Never — keep it until I delete it</SelectItem>
+              </SelectContent>
+            </Select>
+            <p id="branch-ttl-hint" className="text-xs text-content-subtle">
+              Branches are made to be thrown away. The ones nobody throws away are the ones that quietly fill a host.
+            </p>
+          </div>
 
-        <Select
-          label="Delete automatically after"
-          value={ttl}
-          onChange={(e) => setTtl(Number(e.target.value))}
-          hint="Branches are made to be thrown away. The ones nobody throws away are the ones that quietly fill a host."
-        >
-          <option value={1}>1 hour</option>
-          <option value={24}>1 day</option>
-          <option value={168}>1 week</option>
-          <option value={0}>Never — keep it until I delete it</option>
-        </Select>
-
-        {create.error ? (
-          <p className="rounded-md bg-danger/10 px-3 py-2 text-xs text-danger">
-            {create.error instanceof ApiError ? create.error.message : "Could not create the branch."}
-          </p>
-        ) : null}
-
-        <div className="flex justify-end gap-2 pt-1">
+          {create.error ? (
+            <p className="rounded-md bg-danger/10 px-3 py-2 text-xs text-danger">
+              {create.error instanceof ApiError ? create.error.message : "Could not create the branch."}
+            </p>
+          ) : null}
+        </div>
+        <DialogFooter>
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={create.isPending} onClick={() => create.mutate()}>
+          <Button disabled={create.isPending} onClick={() => create.mutate()}>
+            {create.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
             {create.isPending ? "Creating…" : "Create branch"}
           </Button>
-        </div>
-      </div>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -150,9 +207,9 @@ function TreeRow({
         </td>
         <td className="px-4 py-2.5">
           {node.method ? (
-            <Badge tone={node.method === "cow" ? "ok" : "neutral"}>
+            <ToneBadge tone={node.method === "cow" ? "ok" : "neutral"}>
               {node.method === "cow" ? "copy-on-write" : "point-in-time"}
-            </Badge>
+            </ToneBadge>
           ) : (
             <span className="text-xs text-content-subtle">root</span>
           )}
@@ -204,7 +261,7 @@ export default function BranchesPage() {
 
   return (
     <>
-      <PageHeader
+      <InPageHeader
         title="Branches"
         description="A branch is a full, independent copy — its own container, its own backups, its own connection string. Break it freely; the parent never notices."
         actions={<Button onClick={() => setCreating(true)}>New branch</Button>}
@@ -213,11 +270,11 @@ export default function BranchesPage() {
       {isLoading ? (
         <Loading rows={3} />
       ) : error || !data ? (
-        <Card className="px-6 py-14 text-center text-sm text-danger">
+        <Card className="gap-0 py-0 px-6 py-14 text-center text-sm text-danger">
           {error instanceof ApiError ? error.message : "Could not load the branch tree."}
         </Card>
       ) : (
-        <Card>
+        <Card className="gap-0 py-0">
           <table className="w-full text-sm">
             <thead className="border-b border-border text-left text-xs uppercase tracking-wide text-content-subtle">
               <tr>

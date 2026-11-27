@@ -1,8 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import type { ObjectStorageInput, StorageProvider } from "@justpostgres/shared";
-import { Badge, Button, Card, CardHeader } from "./ui.js";
-import { api, ApiError } from "../lib/api.js";
+
+import { api, ApiError } from "@/lib/api";
+
+import { ToneBadge } from "@/components/ToneBadge";
+import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const PROVIDERS: Array<{ id: StorageProvider; label: string; blurb: string }> = [
   { id: "r2", label: "Cloudflare R2", blurb: "No egress fees. The usual choice for a small host." },
@@ -70,18 +77,24 @@ function Field({
   placeholder?: string;
   type?: string;
 }) {
+  const id = useId();
+  const hintId = `${id}-hint`;
   return (
-    <label className="block">
-      <span className="text-xs font-medium text-content-muted">{label}</span>
-      <input
+    <div className="block">
+      <Label htmlFor={id} className="text-xs font-medium text-content-muted">
+        {label}
+      </Label>
+      <Input
+        id={id}
         type={type}
         value={value}
         placeholder={placeholder}
+        aria-describedby={hint ? hintId : undefined}
         onChange={(e) => onChange(e.target.value)}
-        className="mono mt-1 w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm transition-colors placeholder:text-content-subtle hover:border-content-subtle focus:border-accent"
+        className="mono mt-1 h-9 w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm transition-colors placeholder:text-content-subtle hover:border-content-subtle focus:border-accent"
       />
-      {hint ? <span className="mt-1 block text-xs text-content-subtle">{hint}</span> : null}
-    </label>
+      {hint ? <p id={hintId} className="mt-1 text-xs text-content-subtle">{hint}</p> : null}
+    </div>
   );
 }
 
@@ -155,31 +168,34 @@ export default function ObjectStorageCard() {
   const configured = Boolean(settings);
 
   return (
-    <Card className="mb-6">
-      <CardHeader
-        title={
-          <span className="flex items-center gap-2">
-            Backups in object storage
-            {configured ? (
-              <Badge tone="ok" dot>
-                configured
-              </Badge>
-            ) : (
-              <Badge tone="warn" dot>
-                local disk
-              </Badge>
-            )}
-          </span>
-        }
-        description="Backups on the same disk as the database survive a dropped table and nothing else. Not the host dying, not the disk filling, not someone removing the wrong volume. Point them at a bucket and they survive all three."
-        actions={
-          configured ? (
-            <Button variant="secondary" size="sm" onClick={() => clear.mutate()} loading={clear.isPending}>
+    <Card className="mb-6 gap-0 py-0">
+      <CardHeader className="border-b border-border px-5 py-4">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          Backups in object storage
+          {configured ? (
+            <ToneBadge tone="ok" dot>
+              configured
+            </ToneBadge>
+          ) : (
+            <ToneBadge tone="warn" dot>
+              local disk
+            </ToneBadge>
+          )}
+        </CardTitle>
+        <CardDescription className="mt-1 max-w-2xl text-xs leading-relaxed">
+          Backups on the same disk as the database survive a dropped table and nothing else. Not the host
+          dying, not the disk filling, not someone removing the wrong volume. Point them at a bucket and
+          they survive all three.
+        </CardDescription>
+        {configured ? (
+          <CardAction>
+            <Button variant="secondary" size="sm" onClick={() => clear.mutate()} disabled={clear.isPending}>
+              {clear.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
               Stop using it
             </Button>
-          ) : null
-        }
-      />
+          </CardAction>
+        ) : null}
+      </CardHeader>
 
       <div className="border-b border-border px-4 py-3">
         <div className="flex flex-wrap gap-2">
@@ -317,10 +333,12 @@ export default function ObjectStorageCard() {
           proven by the first backup.
         </p>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => test.mutate()} loading={test.isPending}>
+          <Button variant="secondary" onClick={() => test.mutate()} disabled={test.isPending}>
+            {test.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
             {test.isPending ? "Testing…" : "Test connection"}
           </Button>
-          <Button onClick={() => save.mutate()} loading={save.isPending}>
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+            {save.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
             {save.isPending ? "Saving…" : configured ? "Update" : "Save"}
           </Button>
         </div>
